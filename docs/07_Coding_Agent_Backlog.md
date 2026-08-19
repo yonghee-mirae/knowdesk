@@ -1,0 +1,159 @@
+# Coding Agent Backlog
+
+v1.1 개정 — `06_Development_Roadmap.md`의 Phase A~D 순서에 맞춰 재배열했다. 기존 TASK ID는 최대한 유지하고, 새로 필요해진 항목만 각 블록 안에 번호를 추가했다.
+
+---
+
+# Phase A — Walking Skeleton
+
+## Foundation
+
+TASK-001 Create Cargo Workspace (core / cli / src-tauri / frontend)
+
+TASK-002 Configure Logging
+
+TASK-003 Create Configuration System
+
+TASK-004 Create CLI Skeleton (index / search / stats / bench 서브커맨드)
+
+---
+
+## Storage
+
+TASK-101 Create SQLite Schema (`documents` / `paths` 분리 반영)
+
+TASK-102 Create Migration Runner
+
+TASK-103 Create DocumentRepository
+
+TASK-104 Create SearchRepository
+
+TASK-105 Implement Index Pipeline & State Machine (FULL / META / SKIP)
+
+---
+
+## Discovery
+
+TASK-201 Implement DirectoryScanner
+
+TASK-202 Implement FileFilter
+
+TASK-203 Implement SHA256Service
+
+---
+
+## Extraction (TXT만)
+
+TASK-401 Create ContentExtractor trait
+
+TASK-406 TXT Extractor + 인코딩 감지 (`encoding_rs` + `chardetng`, CP949/EUC-KR 대응)
+
+---
+
+## NLP (bigram)
+
+TASK-501 Create Tokenizer trait
+
+TASK-506 BigramTokenizer (MVP 초기 구현)
+
+---
+
+## Search
+
+TASK-601 Query Parser
+
+TASK-602 Search Service
+
+TASK-603 Filename Search
+
+TASK-604 Content Search (bm25 Ranking)
+
+TASK-605 Snippet Generator
+
+---
+
+# Phase B — 실사용 가능한 코어
+
+## Extraction 확장
+
+순서: XLSX → DOCX/PPTX → PDF
+
+TASK-402 XLSX Extractor (`calamine`)
+
+TASK-403 DOCX Extractor (`zip` + `quick-xml`)
+
+TASK-404 PPTX Extractor (`zip` + `quick-xml`)
+
+TASK-405 PDF Extractor (`pdfium-render`) — 한글 CID 폰트 별도 검증 필요
+
+---
+
+## NLP 확장
+
+TASK-502 Synonym Engine
+
+TASK-503 KiwiTokenizer (`Kiwi::from_config` 오프라인 초기화)
+
+TASK-504 bigram 대비 Kiwi 재현율 비교 측정
+
+---
+
+## Monitoring
+
+TASK-301 Implement FileSystemWatcher (`notify`)
+
+TASK-302 Implement EventQueue
+
+TASK-303 Debounce (Office 저장 시 임시파일 폭풍 대응)
+
+---
+
+## Diagnostics 일부
+
+TASK-903 Benchmark Harness (`cli bench` — 색인 처리량, 검색 P95, DB 실측 크기)
+
+---
+
+# Phase C — UI
+
+## UI
+
+TASK-701 Search Window
+
+TASK-702 Result List
+
+TASK-703 Preview Pane (+ Highlight + Snippet)
+
+TASK-705 File/Folder Actions (Open File / Open Folder / Copy Path — 키보드 전용)
+
+TASK-704 Settings Window
+
+---
+
+## Tray
+
+TASK-801 Tray Manager
+
+TASK-802 Hotkey Manager (창 사전 생성 + show/focus 방식 — P95 300ms 대응)
+
+---
+
+## Diagnostics
+
+TASK-901 Statistics Service
+
+TASK-902 Log Export
+
+---
+
+# Phase D — Windows 이관
+
+TASK-1001 Kiwi / PDFium Windows 바이너리 동봉 및 오프라인 초기화 경로
+
+TASK-1002 Windows 경로 처리 (대소문자 정규화, 260자 초과, UNC 오프라인 처리)
+
+TASK-1003 인스톨러 + 코드사이닝
+
+TASK-1004 P95 성능 실측 및 튜닝
+
+TASK-1005 DRM 적용률 실측 (O-4)

@@ -1,0 +1,138 @@
+# Data Model
+
+v1.1 개정 — 상세 근거는 `11_Implementation_Plan.md` 참조.
+
+기존 스키마는 `documents` 테이블이 `path`/`filename`을 직접 보유하고 있었으나, 이는 PRD 7장의 "`DocumentID = SHA256(Content)`, 경로는 별도 관리"와 모순된다. 내용 해시가 PK이면 동일 내용의 사본 여러 개가 한 문서로 병합되어야 하는데, 경로를 같은 테이블에 두면 병합이 불가능하다. `documents`(내용 기준)와 `paths`(경로 기준, 1:N)로 분리한다.
+
+---
+
+## documents
+
+내용(SHA256) 기준. 동일 내용의 사본은 한 행으로 병합된다.
+
+```sql
+CREATE TABLE documents
+(
+    document_id TEXT PRIMARY KEY,   -- SHA256(content)
+
+    file_size INTEGER,
+    text_bytes INTEGER,             -- 추출된 본문 크기 (DB 용량 추정/통계용)
+
+    index_tier TEXT,                -- FULL | META | SKIP
+    index_status TEXT,              -- 상태 머신, 하단 참조
+
+    demotion_reason TEXT,           -- DRM | CORRUPT | ENCRYPTED | PARSE_FAIL
+
+    drm_status TEXT,
+    retry_count INTEGER DEFAULT 0,
+    last_attempt_at DATETIME,
+
+    content_stored INTEGER DEFAULT 1,  -- 1=원문 저장, 0=압축/미저장 (저장 계층 전환용 플래그)
+
+    indexed_at DATETIME
+);
+```
+
+---
+
+## paths
+
+경로 기준. 파일 이동·이름 변경·동일 내용 사본 추적을 담당한다 (1:N, `documents` 참조).
+
+```sql
+CREATE TABLE paths
+(
+    path TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES documents(document_id),
+
+    filename TEXT NOT NULL,
+    extension TEXT NOT NULL,
+
+    modified_at DATETIME,
+    seen_at DATETIME                -- 마지막으로 스캔/감시에서 확인된 시각 (오프라인 드라이브 판별용)
+);
+```
+
+---
+
+# FTS Tables
+
+## filename_fts
+
+파일명 검색 전용.
+
+```sql
+CREATE VIRTUAL TABLE filename_fts USING fts5(filename);
+```
+
+---
+
+## content_fts
+
+본문 검색. `body`(추출 원문 — snippet/highlight 용)와 `morph`(형태소 분석 결과 — 재현율 용) 두 컬럼을 하나의 FTS 테이블로 둔다. bm25 컬럼 가중치로 두 신호를 한 번에 조합할 수 있어, 별도의 `token_fts` 테이블로 분리했을 때 필요한 조인·점수 병합을 피할 수 있다.
+
+```sql
+CREATE VIRTUAL TABLE content_fts USING fts5(body, morph);
+```
+
+**`token_fts`는 별도 테이블로 두지 않는다.** (기존 v1.0 스키마 대비 변경)
+
+---
+
+# index_tier
+
+FULL
+
+META
+
+SKIP
+
+---
+
+# drm_status
+
+NON_DRM
+
+DRM
+
+UNKNOWN
+
+---
+
+# state machine
+
+DISCOVERED
+
+↓
+
+PENDING
+
+↓
+
+EXTRACTING
+
+↓
+
+INDEXING
+
+↓
+
+INDEXED
+
+실패 시
+
+↓
+
+META_INDEXED
+
+또는
+
+↓
+
+FAILED
+
+---
+
+# 참고 — F-06(최신 버전 탐지)과의 관계
+
+`documents`가 내용 해시 기준이므로 동일 내용 사본은 이미 한 행으로 병합되어 있고, `paths`에 경로별 `modified_at`이 있어 최신본 판별이 조회 한 번으로 가능하다. F-06 구현 시 별도의 유사도 연산 없이 이 스키마만으로 상당 부분을 충족한다.

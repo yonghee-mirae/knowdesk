@@ -1,0 +1,7 @@
+# 테스트 픽스처는 바이너리로 취급 — Windows 체크아웃 시 CRLF 변환으로 손상되는 것을 방지
+*.pdf binary
+*.xlsx binary
+*.docx binary
+*.pptx binary
+*.db binary
+*.sqlite binary

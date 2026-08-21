@@ -20,7 +20,8 @@ Before implementing any feature, read below files in `@docs` directory:
 8. 08_API_Contracts.md
 9. 10_DRM_Integration.md
 10. 02_Known_Issues.md
-11. KnowDesk_추가검토사항.md
+11. 12_UI_Spec.md
+12. KnowDesk_추가검토사항.md
 
 PRD is the source of truth for product requirements.
 

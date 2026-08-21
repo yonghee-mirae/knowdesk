@@ -21,7 +21,7 @@ CREATE TABLE documents
     index_tier TEXT,                -- FULL | META | SKIP
     index_status TEXT,              -- 상태 머신, 하단 참조
 
-    demotion_reason TEXT,           -- DRM | CORRUPT | ENCRYPTED | PARSE_FAIL
+    demotion_reason TEXT,           -- DRM | CORRUPT | ENCRYPTED | PARSE_FAIL | EMPTY_TEXT
 
     drm_status TEXT,
     retry_count INTEGER DEFAULT 0,

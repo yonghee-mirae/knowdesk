@@ -6,11 +6,21 @@ v1.1 개정 — `06_Development_Roadmap.md`의 Phase A~D 순서에 맞춰 재배
 
 # Phase A — Walking Skeleton
 
+## Spike (본구현 아님, 사전 검증 — `06_Development_Roadmap.md` S-1/S-2 참조)
+
+TASK-005 PDF 한글 추출 스파이크 — `pdfium-render`로 CID 폰트·다단·표·스캔본 샘플 검증 (1일 내외)
+
+TASK-006 Kiwi 메모리 실측 스파이크 — `from_config` 로드 후 RSS 측정 (1일 내외)
+
+---
+
 ## Foundation
 
 TASK-001 Create Cargo Workspace (core / cli / src-tauri / frontend)
 
 TASK-002 Configure Logging
+
+TASK-007 로그 마스킹 — 문서 본문·검색어가 로그에 기록되지 않도록 처리 (`KnowDesk_추가검토사항.md` E-3 참조)
 
 TASK-003 Create Configuration System
 
@@ -114,6 +124,8 @@ TASK-304 `cli watch` 서브커맨드 — 완료 (헤드리스 검증용)
 
 TASK-305 경로 정규화 버그 수정 — 완료. 최초 스캔(사용자가 준 경로)과 `notify` 이벤트(cwd를 붙인 경로)의 문자열 표현이 달라 같은 파일이 문서 두 개로 나뉘어 색인되고, 내용을 수정해도 예전 내용이 검색에 영구히 남는 버그를 실사용 중 발견. `canonical_path`(`core/src/index/mod.rs`)로 수정, 상세 근거는 `06_Development_Roadmap.md` B4 참조
 
+TASK-306 색인 스로틀링 — 워커 수 제한 + 배치 간 sleep. 초기 대량 색인이 유휴 CPU 목표(PRD 4장)를 침해하지 않게 함 (`KnowDesk_추가검토사항.md` Part F 참조)
+
 ---
 
 ## Diagnostics 일부
@@ -151,6 +163,8 @@ TASK-802 Hotkey Manager (창 사전 생성 + show/focus 방식 — P95 300ms 대
 TASK-901 Statistics Service
 
 TASK-902 Log Export
+
+TASK-904 초기 색인 진행률 표시 — 온보딩 위저드 아님, 진행률 + "색인 중" 상태 문구만 (`KnowDesk_추가검토사항.md` E-2 참조)
 
 ---
 

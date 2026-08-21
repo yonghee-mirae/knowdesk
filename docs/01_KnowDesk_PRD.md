@@ -286,7 +286,7 @@ Kiwi
 
 추가 기능
 
-- 사용자 정의 동의어 사전
+- 사용자 정의 동의어 사전 (범위 축소: 파일 기반 사전(읽기 전용), 사용자 편집 UI는 Phase 3)
 
 ---
 
@@ -382,7 +382,7 @@ Kiwi
 
 유휴 메모리
 
-- 200MB 이하
+- 200MB 이하 (S-2 실측 후 확정 — Kiwi 모델 + 웹뷰 상주 기준)
 
 ---
 
@@ -429,8 +429,8 @@ v1.1 개정 — 아래 M0~M15 선형 순서 대신, **동작하는 end-to-end �
 | Phase | 내용 | PRD 기능 대응 |
 |---|---|---|
 | A. Walking Skeleton | Foundation, Storage, Discovery, TXT 추출, bigram 토큰화, Index Pipeline, Search | F-01(TXT만), F-02 |
-| B. 실사용 가능한 코어 | XLSX/DOCX/PPTX/PDF 추출, Kiwi 연동, 동의어, 파일 감시, 벤치마크 | F-01(전체 포맷), F-02(한국어), F-05 일부 |
-| C. UI | 검색창, 프리뷰, 액션, 트레이·단축키, 설정·진단 | F-03, F-04, F-05 |
+| B. 실사용 가능한 코어 | XLSX/DOCX/PPTX/PDF 추출, Kiwi 연동, 동의어, 파일 감시, 벤치마크 | F-01(전체 포맷), F-02(한국어) |
+| C. UI | 검색창, 프리뷰, 액션, 트레이·단축키, 설정·진단 | F-03, F-04 |
 
 **완료 기준(Phase A):** `cli index ./samples && cli search "채권 발행"`이 스니펫과 함께 결과를 반환한다.
 

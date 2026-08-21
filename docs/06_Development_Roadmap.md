@@ -6,10 +6,18 @@ v1.1 개정 — M0~M15 선형 순서 대신, **동작하는 end-to-end 파이프
 
 # Phase A — Walking Skeleton (Linux 전량 검증 가능, 완료)
 
+## S-1 PDF 한글 추출 스파이크
+
+DRM을 논외로 하면 최대 리스크는 PDF 한글 추출 품질이다. 본구현(B1)이 아니라 사전 검증 스파이크(1일 내외)로, 본격 구현 전에 CID 폰트·다단 레이아웃·표·스캔본(이미지 PDF) 샘플에서 `pdfium-render`로 한글이 정상 추출되는지 먼저 확인한다. 스캔본은 OCR이 Out of Scope이라 텍스트가 비어 있을 수 있음을 미리 확인해두는 것도 포함(`04_Data_Model.md`의 `EMPTY_TEXT` 강등 사유 참조).
+
+## S-2 Kiwi 메모리 실측 스파이크
+
+유휴 메모리 200MB 목표(PRD 4장)의 실현 가능성이 미검증이다. 본구현이 아니라 `Kiwi::from_config`로 모델을 로드한 뒤 RSS를 실측하는 스파이크(1일 내외)로, 목표치를 확정하기 전에 Kiwi 모델 자체의 메모리 사용량부터 파악한다.
+
 ## A1 Foundation
 
 - Cargo Workspace 구성 (core / cli / src-tauri / frontend)
-- Logging
+- Logging (로그 마스킹 포함 — 문서 본문·검색어는 로그에 기록하지 않는다, `KnowDesk_추가검토사항.md` E-3 참조)
 - Configuration
 - CLI Skeleton (index / search / stats / bench)
 
@@ -55,7 +63,7 @@ v1.1 개정 — M0~M15 선형 순서 대신, **동작하는 end-to-end 파이프
 
 ## B1 Extraction 확장 (완료)
 
-순서: XLSX → DOCX/PPTX → PDF (PDF 한글 CID 폰트 검증이 가장 리스크가 큰 구간이므로 마지막에 배치)
+순서: XLSX → DOCX/PPTX → PDF. 구현 순서 자체는 그대로 두되(PDF가 가장 복잡한 포맷), 최대 리스크인 한글 CID 폰트 문제는 본구현 전에 S-1 스파이크로 먼저 검증한다 — "리스크가 크니 마지막에 검증"이 아니라 "리스크가 크니 먼저 검증"으로 순서를 바꿨다.
 
 - XLSX (calamine)
 - DOCX / PPTX (zip + quick-xml)
@@ -85,6 +93,7 @@ v1.1 개정 — M0~M15 선형 순서 대신, **동작하는 end-to-end 파이프
 - ⚠️ **경로 정규화 버그 발견·수정 (2026-08-21):** `watch` 사용 중 사용자가 실제로 겪은 버그 — 파일 내용을 수정해도 예전 내용이 검색에 영구히 남았다. 원인: 최초 전체 스캔(`run_index`)은 사용자가 준 경로 문자열(예: `./samples/x.txt`)을 그대로 쓰지만, `notify`가 그 뒤 변경을 알릴 땐 현재 작업 디렉터리를 붙인 경로(`/현재/디렉터리/./samples/x.txt`)로 이벤트를 준다. `paths` 테이블은 경로 문자열이 기본 키라서 같은 파일이 문서 두 개로 나뉘어 색인되고, 내용이 바뀌어도 예전 문서가 정리되지 않은 채 검색에 계속 노출됐다. `IndexPipeline::index_file`/`queue`에서 경로를 항상 `canonicalize`하도록 고쳤다(`core/src/index/mod.rs`의 `canonical_path`) — 삭제된 파일은 canonicalize가 안 되므로 부모 디렉터리만 canonicalize해서 재구성한다.
 - 문서 삭제 시 orphan 정리(`DocumentRepository::remove_path`) — 다른 경로가 그 문서를 더 안 참조하면 `documents`/`content_fts`/`document_bodies`까지 정리. 네트워크 드라이브 대량 오프라인과 실제 삭제를 구분하는 문제(D-1, 미결)는 범위 밖 — 지금은 경로 하나가 사라지면 그대로 삭제로 처리한다.
 - 헤드리스 검증용 `cli watch <경로>` 서브커맨드 추가.
+- 색인 스로틀링 — 워커 수 제한 + 배치 간 sleep으로 초기 대량 색인이 유휴 CPU 목표(PRD 4장, 1% 미만)를 침해하지 않게 한다.
 
 ## B5 Benchmark (완료)
 
@@ -123,6 +132,7 @@ v1.1 개정 — M0~M15 선형 순서 대신, **동작하는 end-to-end 파이프
 - Settings Window
 - Statistics
 - Logs
+- 초기 색인 진행률 표시 — 온보딩 위저드는 아니고, 최초 대량 색인 중 진행률과 "색인 중" 상태 문구만 노출한다(`KnowDesk_추가검토사항.md` E-2 참조)
 
 ---
 

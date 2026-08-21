@@ -27,6 +27,16 @@ pub trait Tokenizer {
 }
 ```
 
+## SynonymDictionary
+
+동의어 사전 추상화 (Phase B3). Kiwi가 못 잇는, 뜻은 같지만 글자가 다른 단어(사내 약어·전문용어 등)를 검색어 확장 시점에 연결한다. 인터페이스만 정의돼 있고 구현은 보류 상태다(`06_Development_Roadmap.md` B3, 2026-08-21 — 지금은 불필요하다는 판단).
+
+```rust
+pub trait SynonymDictionary {
+    fn synonyms(&self, term: &str) -> Vec<String>;
+}
+```
+
 ## DocumentStore
 
 원문 저장 방식 추상화. 원문 저장(구성 A) → 압축 하이브리드(구성 D) 전환을 재색인 없이 가능하게 한다.

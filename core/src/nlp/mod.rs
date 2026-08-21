@@ -3,6 +3,7 @@
 
 pub mod bigram;
 pub mod kiwi;
+pub mod synonym;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token(pub String);

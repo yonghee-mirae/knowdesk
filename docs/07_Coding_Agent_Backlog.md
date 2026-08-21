@@ -90,7 +90,7 @@ TASK-405 PDF Extractor (`pdfium-render`) — 한글 CID 폰트 별도 검증 필
 
 ## NLP 확장
 
-TASK-502 Synonym Engine
+TASK-502 Synonym Engine — 인터페이스(`SynonymDictionary` 트레이트)만 정의, 구현 보류(2026-08-21, 지금은 불필요하다는 판단). 사전 파일 형식·로딩·`search::service` 연결은 미착수
 
 TASK-503 KiwiTokenizer (`Kiwi::from_config` 오프라인 초기화) — 완료. 네이티브 라이브러리는 v0.22.2 고정(`11_Implementation_Plan.md` 참조)
 

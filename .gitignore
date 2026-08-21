@@ -21,5 +21,6 @@ src-tauri/target/
 *.db
 *.sqlite
 
-# 로컬 개발용 네이티브 PDFium 라이브러리 (배포판은 인스톨러가 동봉, `03_Architecture.md` 참조)
+# 로컬 개발용 네이티브 PDFium/Kiwi 라이브러리 (배포판은 인스톨러가 동봉, `03_Architecture.md` 참조)
 /.pdfium/
+/.kiwi/

@@ -132,7 +132,7 @@ pub trait ContentExtractor {
 
 ## Tokenizer (trait)
 
-형태소 분석기를 교체 가능하게 추상화한다. MVP 초반은 `BigramTokenizer`로 시작하고, Kiwi 연동 검증 후 `KiwiTokenizer`로 교체한다.
+형태소 분석기를 교체 가능하게 추상화한다. `BigramTokenizer`와 `KiwiTokenizer`는 "택일"이 아니라 역할이 다르다 — `BigramTokenizer`는 항상 실행되는 기본 토크나이저(`content_fts.morph`), `KiwiTokenizer`는 가능할 때만 추가로 붙는 보조 토크나이저(`content_fts.morph_kiwi`)다 (v1.1 대비 변경, Phase B2 — 근거는 `11_Implementation_Plan.md` 참조).
 
 ```rust
 pub trait Tokenizer {
@@ -142,9 +142,11 @@ pub trait Tokenizer {
 
 구현
 
-### BigramTokenizer (MVP 초기)
+### BigramTokenizer (기본, 항상 실행)
 
-### KiwiTokenizer (Kiwi 연동, `Kiwi::from_config`로 오프라인 초기화)
+### KiwiTokenizer (보조, `Kiwi::from_config`로 오프라인 초기화, 가능할 때만 실행)
+
+검색어 분석에는 `KiwiTokenizer`만 쓴다(가능할 때). bigram은 색인에서만 쓰는 기본 토크나이저이며, 검색어를 bigram으로 분석해도 "정확한 문구"·"비슷한 의미" 어느 쪽에도 도움이 되지 않고 짧은 음절 조각 때문에 정밀도만 떨어뜨린다 — 자세한 근거는 `11_Implementation_Plan.md` 참조.
 
 ---
 

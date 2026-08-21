@@ -11,8 +11,12 @@ use knowdesk_core::extract::xlsx::XlsxExtractor;
 use knowdesk_core::extract::ContentExtractor;
 use knowdesk_core::index::pipeline::IndexPipeline;
 use knowdesk_core::nlp::bigram::BigramTokenizer;
+use knowdesk_core::nlp::kiwi::KiwiTokenizer;
+use knowdesk_core::nlp::Tokenizer;
 use knowdesk_core::search::service::SqliteSearchService;
-use knowdesk_core::search::{SearchMode as CoreSearchMode, SearchRequest, SearchService};
+use knowdesk_core::search::{
+    MatchKind, SearchMode as CoreSearchMode, SearchRequest, SearchService,
+};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -72,6 +76,26 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`로 Kiwi를 초기화한다. bigram은
+/// 항상 쓰는 기본 토크나이저라 실패해도 폴백할 필요가 없고, Kiwi는 되면 붙는 보조
+/// 토크나이저라 안 되면 그냥 `None` — index/search 양쪽에서 공유한다.
+fn load_kiwi() -> Option<KiwiTokenizer> {
+    match KiwiTokenizer::from_env() {
+        Some(Ok(kiwi)) => {
+            tracing::info!("Kiwi 형태소 분석기 사용");
+            Some(kiwi)
+        }
+        Some(Err(e)) => {
+            tracing::warn!(error = %e, "Kiwi 초기화 실패, bigram만 사용");
+            None
+        }
+        None => {
+            tracing::info!("Kiwi 미설정, bigram만 사용");
+            None
+        }
+    }
+}
+
 fn run_index(db: &Db, config: &Config, path: &Path) -> anyhow::Result<()> {
     let extractors: Vec<Box<dyn ContentExtractor>> = vec![
         Box::new(TxtExtractor),
@@ -80,12 +104,14 @@ fn run_index(db: &Db, config: &Config, path: &Path) -> anyhow::Result<()> {
         Box::new(PptxExtractor),
         Box::new(PdfExtractor),
     ];
-    let tokenizer = BigramTokenizer;
+    let bigram = BigramTokenizer;
+    let kiwi = load_kiwi();
     let pipeline = IndexPipeline {
         conn: &db.conn,
         config,
         extractors: &extractors,
-        tokenizer: &tokenizer,
+        bigram: &bigram,
+        kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
     };
     let outcome = pipeline.index_directory(path)?;
     println!(
@@ -99,7 +125,11 @@ fn run_index(db: &Db, config: &Config, path: &Path) -> anyhow::Result<()> {
 }
 
 fn run_search(db: &Db, query: &str, mode: ModeArg, limit: i64) -> anyhow::Result<()> {
-    let service = SqliteSearchService { conn: &db.conn };
+    let kiwi = load_kiwi();
+    let service = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
+    };
     let request = SearchRequest {
         query: query.to_string(),
         mode: match mode {
@@ -116,7 +146,11 @@ fn run_search(db: &Db, query: &str, mode: ModeArg, limit: i64) -> anyhow::Result
     }
 
     for hit in result.hits {
-        println!("{}", hit.path);
+        let tag = match hit.match_kind {
+            MatchKind::Exact => "정확 일치",
+            MatchKind::Morphological => "형태소 분석",
+        };
+        println!("{} [{tag}]", hit.path);
         if let Some(snippet) = hit.snippet {
             println!("  {snippet}");
         }

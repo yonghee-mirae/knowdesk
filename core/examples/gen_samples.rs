@@ -28,6 +28,7 @@ fn main() {
     write_txt_utf8(out_dir);
     write_txt_euckr(out_dir);
     write_txt_unrelated(out_dir);
+    write_txt_irregular_verb(out_dir);
     write_xlsx(out_dir);
     write_docx(out_dir);
     write_pptx(out_dir);
@@ -42,6 +43,9 @@ fn main() {
         out_dir.display()
     );
     println!("  cargo run -p knowdesk-cli -- --db ./samples.db search \"채권 발행\"");
+    println!(
+        "  cargo run -p knowdesk-cli -- --db ./samples.db search \"짓다\"  # Kiwi 연동 시 검색어도 형태소 분석 — 사전형으로 활용형을 찾음"
+    );
 }
 
 fn write_txt_utf8(dir: &Path) {
@@ -62,6 +66,17 @@ fn write_txt_euckr(dir: &Path) {
 
 fn write_txt_unrelated(dir: &Path) {
     fs::write(dir.join("무관.txt"), "회의록 요약: 다음 분기 예산안 검토\n").unwrap();
+}
+
+fn write_txt_irregular_verb(dir: &Path) {
+    // "짓다"는 ㅅ 불규칙 동사라 과거형 "지었다"의 표면형에는 "짓"이라는 글자가
+    // 전혀 나타나지 않는다. bigram은 원문 글자 그대로 2글자씩 자르기만 하므로
+    // "짓"으로는 절대 찾을 수 없지만, Kiwi는 어간을 복원해 찾아낸다.
+    // 검색어 "짓"(어간)뿐 아니라 사전형 "짓다"로도 찾아진다 — Kiwi는 색인 시점에
+    // 어간을 복원하고(`content_fts.morph_kiwi`), 검색어도 형태소 분석해서 확장하기
+    // 때문이다 (`core/tests/index_search.rs`의 `finds_irregular_verb_stem_only_with_kiwi`,
+    // `expands_query_with_kiwi_to_find_dictionary_form`과 동일한 케이스).
+    fs::write(dir.join("공사보고서.txt"), "그는 새 건물을 지었다.\n").unwrap();
 }
 
 fn write_xlsx(dir: &Path) {

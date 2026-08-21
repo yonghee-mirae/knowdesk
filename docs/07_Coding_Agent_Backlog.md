@@ -74,7 +74,7 @@ TASK-605 Snippet Generator
 
 # Phase B — 실사용 가능한 코어
 
-## Extraction 확장
+## Extraction 확장 (완료)
 
 순서: XLSX → DOCX/PPTX → PDF
 
@@ -84,7 +84,7 @@ TASK-403 DOCX Extractor (`zip` + `quick-xml`)
 
 TASK-404 PPTX Extractor (`zip` + `quick-xml`)
 
-TASK-405 PDF Extractor (`pdfium-render`) — 한글 CID 폰트 별도 검증 필요
+TASK-405 PDF Extractor (`pdfium-render`) — 한글 CID 폰트 별도 검증 필요 → 실제 CID 폰트 PDF로 검증 완료
 
 ---
 
@@ -92,9 +92,13 @@ TASK-405 PDF Extractor (`pdfium-render`) — 한글 CID 폰트 별도 검증 필
 
 TASK-502 Synonym Engine
 
-TASK-503 KiwiTokenizer (`Kiwi::from_config` 오프라인 초기화)
+TASK-503 KiwiTokenizer (`Kiwi::from_config` 오프라인 초기화) — 완료. 네이티브 라이브러리는 v0.22.2 고정(`11_Implementation_Plan.md` 참조)
 
-TASK-504 bigram 대비 Kiwi 재현율 비교 측정
+TASK-504 bigram 대비 Kiwi 재현율 비교 측정 — 질적 비교(테스트 케이스)로 완료. 대규모 정량 측정은 TASK-903(벤치마크)으로 이동
+
+TASK-505 bigram(기본)+Kiwi(보조) 이원화 재설계 — `content_fts.morph`/`morph_kiwi` 컬럼 분리, 검색어 형태소 분석 확장, 매칭 근거("정확 일치"/"형태소 분석") 표시 — 완료
+
+TASK-507 스니펫 원문 강조 보강 — 리터럴 검색어 → Kiwi 분석 어간 → 형태소 위치(`Tokenizer::locate`, 불규칙 활용형 대응) 순으로 원문에서 강조 위치를 찾음 — 완료
 
 ---
 

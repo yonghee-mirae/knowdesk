@@ -19,7 +19,7 @@ pub trait ContentExtractor {
 
 ## Tokenizer
 
-형태소 분석기 추상화. MVP는 `BigramTokenizer`로 시작하고 `KiwiTokenizer`로 교체 가능하다.
+형태소 분석기 추상화. `BigramTokenizer`(기본, 항상 실행)와 `KiwiTokenizer`(보조, 가능할 때만 실행)를 함께 쓴다 — 택일이 아니다 (`11_Implementation_Plan.md` Phase B2 참조).
 
 ```rust
 pub trait Tokenizer {

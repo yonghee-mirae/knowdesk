@@ -4,7 +4,7 @@ v1.1 개정 — M0~M15 선형 순서 대신, **동작하는 end-to-end 파이프
 
 ---
 
-# Phase A — Walking Skeleton (Linux 전량 검증 가능)
+# Phase A — Walking Skeleton (Linux 전량 검증 가능, 완료)
 
 ## A1 Foundation
 
@@ -53,18 +53,23 @@ v1.1 개정 — M0~M15 선형 순서 대신, **동작하는 end-to-end 파이프
 
 # Phase B — 실사용 가능한 코어
 
-## B1 Extraction 확장
+## B1 Extraction 확장 (완료)
 
 순서: XLSX → DOCX/PPTX → PDF (PDF 한글 CID 폰트 검증이 가장 리스크가 큰 구간이므로 마지막에 배치)
 
 - XLSX (calamine)
 - DOCX / PPTX (zip + quick-xml)
-- PDF (pdfium-render)
+- PDF (pdfium-render) — 실제 한글 CID 폰트 PDF로 검증 완료
 
-## B2 Kiwi 연동
+## B2 Kiwi 연동 (완료)
 
 - KiwiTokenizer (`Kiwi::from_config`, 오프라인 초기화 — 망분리 대응)
-- bigram 대비 재현율 비교 측정
+  - ⚠️ Kiwi 네이티브 라이브러리는 **v0.22.2** 고정 (`v0.23.2`는 `kiwi-rs`와 ABI가 안 맞아 세그폴트 — `11_Implementation_Plan.md` 참조)
+- bigram(항상 실행하는 기본 토크나이저)과 Kiwi(가능할 때만 실행하는 보조 토크나이저)를 **택일이 아니라 병행**하는 것으로 재설계 (`content_fts.morph`/`morph_kiwi` 컬럼 분리)
+- 검색어도 Kiwi로 형태소 분석해 확장 (`(원문 OR morph_kiwi:(분석 형태소...))`) — bigram은 검색어 분석에 안 씀
+- 히트별로 "정확 일치"/"형태소 분석" 매칭 근거 표시
+- 스니펫 강조: 리터럴 → Kiwi 분석 어간 → `Tokenizer::locate`(형태소 위치, 불규칙 활용형 대응) 순으로 원문에서 강조 위치를 찾음
+- bigram 대비 재현율 비교 — 질적 사례(테스트)로 확인 완료. 대규모 정량 측정은 B5 벤치마크로 이동
 
 ## B3 동의어 사전
 

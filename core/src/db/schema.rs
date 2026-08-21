@@ -4,6 +4,10 @@
 //! (`path`, `document_id`)을 추가했다 — FTS5 결과를 `documents`/`paths`로 되짚어
 //! 조인하기 위한 구현상 필수 요소이며, 검색 가능한 컬럼(`filename`/`body`/`morph`)
 //! 자체는 문서 정의 그대로다.
+//!
+//! `content_fts.morph_kiwi`는 v1.1 스키마에 없던 컬럼이다 (Phase B2 재설계).
+//! `morph`(bigram)은 항상 채우는 기본 토크나이저, `morph_kiwi`는 Kiwi가 가능할 때만
+//! 채우는 보조 토크나이저로 역할을 나눴다 — 자세한 내용은 `04_Data_Model.md` 참조.
 
 pub const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS documents
@@ -55,6 +59,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS filename_fts USING fts5(
 CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
     body,
     morph,
+    morph_kiwi,
     document_id UNINDEXED
 );
 "#;

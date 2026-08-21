@@ -69,11 +69,13 @@ CREATE VIRTUAL TABLE filename_fts USING fts5(filename);
 
 ## content_fts
 
-본문 검색. `body`(추출 원문 — snippet/highlight 용)와 `morph`(형태소 분석 결과 — 재현율 용) 두 컬럼을 하나의 FTS 테이블로 둔다. bm25 컬럼 가중치로 두 신호를 한 번에 조합할 수 있어, 별도의 `token_fts` 테이블로 분리했을 때 필요한 조인·점수 병합을 피할 수 있다.
+본문 검색. `body`(추출 원문 — snippet/highlight 용), `morph`(bigram, 항상 채우는 기본 토크나이저), `morph_kiwi`(Kiwi, 가능할 때만 채우는 보조 토크나이저 — 없으면 빈 문자열) 세 컬럼을 하나의 FTS 테이블로 둔다. bm25 컬럼 가중치로 세 신호를 한 번에 조합할 수 있어, 별도의 `token_fts` 테이블로 분리했을 때 필요한 조인·점수 병합을 피할 수 있다 (v1.1 대비 변경 — Phase B2에서 `morph_kiwi` 컬럼 추가, `03_Architecture.md`/`11_Implementation_Plan.md` 참조).
 
 ```sql
-CREATE VIRTUAL TABLE content_fts USING fts5(body, morph);
+CREATE VIRTUAL TABLE content_fts USING fts5(body, morph, morph_kiwi);
 ```
+
+검색어도 Kiwi가 있으면 형태소 분석해서 `(원문 OR morph_kiwi:(분석 형태소...))`로 확장한다 — bigram은 검색어 분석에는 쓰지 않는다(색인에만 쓰는 기본 토크나이저). 확장 없이 리터럴로 걸리면 "정확 일치", 확장을 거쳐야만 걸리면 "형태소 분석"으로 구분해 결과에 표시한다.
 
 **`token_fts`는 별도 테이블로 두지 않는다.** (기존 v1.0 스키마 대비 변경)
 

@@ -70,8 +70,12 @@
 
 **Kiwi 오프라인 초기화.** `kiwi-rs`의 `Kiwi::init()`은 GitHub 릴리스에서 라이브러리·모델을 **자동 다운로드**한다. 망분리 환경에서 동작하지 않으므로 `Kiwi::from_config()`로 동봉 경로를 명시하는 경로만 사용한다.
 
-- `kiwi_win_x64_v0.23.2.zip` 35.1MB / `kiwi_lnx_x86_64_v0.23.2.tgz` 71.0MB
-- `kiwi_model_v0.23.2_base.tgz` 84.0MB
+- `kiwi_win_x64_v0.22.2.zip` / `kiwi_lnx_x86_64_v0.22.2.tgz`
+- `kiwi_model_v0.22.2_base.tgz`
+
+> **버전 정정 (Phase B2, 2026-08-21):** 원래 명시했던 `v0.23.2`는 `kiwi-rs 2026.7.24`와 ABI가 맞지 않아 **세그폴트**한다. v0.23.2의 `kiwi_analyze_option_t`에 `typo_transformer`/`typo_threshold` 필드가 추가되었는데, `kiwi-rs 2026.7.24`의 FFI 구조체는 이를 모른 채 옛 5필드 레이아웃으로 값을 전달해 네이티브 코드가 오타 교정기 포인터 자리를 쓰레기 값으로 읽는다. 실제로 v0.23.2 라이브러리+모델로 `Kiwi::from_config` → `tokenize()`를 호출하면 `PreparedTypoTransformer::generateGraph` 안에서 죽는 것을 gdb로 확인했다. `v0.22.2`는 해당 필드가 없는 구버전 구조체와 맞아 정상 동작한다(실제 다운로드 후 한글 형태소 분리까지 검증). CONG 모델을 쓰므로 `build_options`는 `KIWI_BUILD_DEFAULT_WITH_CONG`을 명시해야 한다(`kiwi-cli --model-type cong`과 동일). 라이브러리/모델 경로는 `KNOWDESK_KIWI_LIB_PATH`(라이브러리 파일)·`KNOWDESK_KIWI_MODEL_DIR`(모델 디렉터리, 예: `models/cong/base`) 환경 변수로 지정한다.
+
+> **토크나이저 역할 재설계 (Phase B2, 2026-08-21):** 원래는 bigram/Kiwi가 "택일"(둘 중 하나로 색인)이었으나, bigram은 항상 실행되는 **기본** 토크나이저(`content_fts.morph`), Kiwi는 가능할 때만 추가로 붙는 **보조** 토크나이저(`content_fts.morph_kiwi`, 새 컬럼)로 재설계했다. 검색어 분석도 새로 추가했는데, **Kiwi만** 적용한다 — bigram은 색인에서만 의미가 있고 검색어를 분석해도 짧은 음절 조각(예: "다" 같은 흔한 어미) 때문에 정밀도만 떨어뜨릴 뿐 회귀도 없고 이득도 없다(bigram 검색어 분석은 원래 존재한 적이 없었으므로, 안 넣는 것은 현재 동작 유지일 뿐 손실이 아니다). Kiwi 검색어 분석은 조사/어미 등 순수 문법 형태소를 제외한 의미 형태소만 남기고(`KiwiTokenizer::tokenize`의 세종 품사 태그 필터), 원래 검색어를 **교체가 아니라 OR로 추가**한다 — 문맥 없는 단독 검색어는 Kiwi도 오분석할 수 있어서(예: "이사회" 단독 입력 시 "이(관형사)+사회"로 잘못 쪼개짐, 실제 확인함) 리터럴을 안전망으로 남겨야 한다. 검색 결과는 리터럴로 걸렸으면 "정확 일치", 확장으로만 걸렸으면 "형태소 분석"으로 구분해 표시한다.
 
 **파일 크기 상한.** PRD 기준 **기본 50MB 초과 파일은 SKIP** (사용자 설정 가능). Phase A3 `FileFilter`에 반영한다.
 

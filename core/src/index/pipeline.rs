@@ -35,7 +35,11 @@ pub struct IndexPipeline<'a> {
     pub conn: &'a Connection,
     pub config: &'a Config,
     pub extractors: &'a [Box<dyn ContentExtractor>],
-    pub tokenizer: &'a dyn Tokenizer,
+    /// 기본 토크나이저 — 항상 실행되어 `content_fts.morph`를 채운다.
+    pub bigram: &'a dyn Tokenizer,
+    /// 보조 토크나이저 — 가능할 때만 실행되어 `content_fts.morph_kiwi`를 채운다.
+    /// `None`이면 `morph_kiwi`는 빈 문자열로 남는다.
+    pub kiwi: Option<&'a dyn Tokenizer>,
 }
 
 impl<'a> IndexPipeline<'a> {
@@ -117,8 +121,11 @@ impl<'a> IndexPipeline<'a> {
 
         match extractor.extract(&document_info) {
             Ok(result) => {
-                let tokens = self.tokenizer.tokenize(&result.body);
-                let morph = join_tokens(&tokens);
+                let morph = join_tokens(&self.bigram.tokenize(&result.body));
+                let morph_kiwi = self
+                    .kiwi
+                    .map(|kiwi| join_tokens(&kiwi.tokenize(&result.body)))
+                    .unwrap_or_default();
 
                 DocumentRepository::upsert_document(
                     self.conn,
@@ -132,7 +139,13 @@ impl<'a> IndexPipeline<'a> {
                     },
                 )?;
                 SqliteDocumentStore { conn: self.conn }.put_body(document_id, &result.body)?;
-                SearchRepository::index_content(self.conn, document_id, &result.body, &morph)?;
+                SearchRepository::index_content(
+                    self.conn,
+                    document_id,
+                    &result.body,
+                    &morph,
+                    &morph_kiwi,
+                )?;
                 Ok(IndexTier::Full)
             }
             Err(e) => {

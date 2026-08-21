@@ -86,9 +86,13 @@ v1.1 개정 — M0~M15 선형 순서 대신, **동작하는 end-to-end 파이프
 - 문서 삭제 시 orphan 정리(`DocumentRepository::remove_path`) — 다른 경로가 그 문서를 더 안 참조하면 `documents`/`content_fts`/`document_bodies`까지 정리. 네트워크 드라이브 대량 오프라인과 실제 삭제를 구분하는 문제(D-1, 미결)는 범위 밖 — 지금은 경로 하나가 사라지면 그대로 삭제로 처리한다.
 - 헤드리스 검증용 `cli watch <경로>` 서브커맨드 추가.
 
-## B5 Benchmark
+## B5 Benchmark (완료)
 
-- Benchmark Harness (`cli bench`) — 색인 처리량, 검색 P95, DB 실측 크기
+- Benchmark Harness (`cli bench <경로> [--queries 파일] [--repeat N]`) — 색인 처리량, 검색 P95(기준: PRD 4장 "검색 응답 P95 1초 이내" 대비 PASS/FAIL 표시), DB 실측 크기(원본 대비 배율)
+- "검색창 호출 P95 300ms"·유휴 CPU/메모리는 트레이·전역 단축키·상주 프로세스가 있어야 실측 가능해서 범위 밖(Phase C/D)
+- 검색 벤치마크용 검색어는 `--queries` 파일(한 줄에 하나)로 주거나, 생략하면 내부 기본 세트(키워드/구문/AND/OR/NOT/접두 각 1개) 사용
+- 대량 코퍼스가 필요해 `core/examples/gen_bench_corpus.rs` 신설 — `gen_samples`(포맷 커버리지용, 파일 10여 개)와 별도로, 개수·총 용량 규모가 목적이라 `.txt`만 대량(기본 5,000건) 생성. 포맷별 추출 정확성은 `gen_samples`/익스트랙터 테스트가 이미 커버
+- `--db`가 비어있어야 처리량 숫자가 의미 있음(이미 색인된 db에 돌리면 대부분 SKIP) — 안내 문구로 남김
 
 ---
 

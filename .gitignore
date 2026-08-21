@@ -16,8 +16,9 @@ src-tauri/target/
 .idea/
 *.log
 
-# 수동 테스트 산출물 (core/examples/gen_samples.rs로 재생성 가능)
+# 수동 테스트 산출물 (core/examples/gen_samples.rs, gen_bench_corpus.rs로 재생성 가능)
 /samples/
+/bench_corpus/
 *.db
 *.db-shm
 *.db-wal

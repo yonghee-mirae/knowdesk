@@ -118,7 +118,7 @@ TASK-305 경로 정규화 버그 수정 — 완료. 최초 스캔(사용자가 �
 
 ## Diagnostics 일부
 
-TASK-903 Benchmark Harness (`cli bench` — 색인 처리량, 검색 P95, DB 실측 크기)
+TASK-903 Benchmark Harness (`cli bench` — 색인 처리량, 검색 P95, DB 실측 크기) — 완료. 대량 코퍼스는 `core/examples/gen_bench_corpus.rs`로 생성, 상세 근거는 `06_Development_Roadmap.md` B5 참조
 
 ---
 

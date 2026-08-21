@@ -630,6 +630,48 @@ fn highlights_kiwi_analyzed_stem_when_typed_query_itself_is_absent() {
 }
 
 #[test]
+fn widens_highlight_to_include_trailing_symbol_not_part_of_any_fts5_token() {
+    // FTS5 기본 토크나이저는 "%"를 구분자로 보고 토큰에 포함하지 않는다. 그래서
+    // "3.2%"로 검색하면 스니펫이 ">>3.2<<%"처럼 강조가 검색어보다 짧게 나오는
+    // 문제가 실제로 있었다 — 강조 바로 뒤가 검색어의 나머지와 이어지면 넓혀야
+    // 한다.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("보고서.txt"), "GDP 성장률은 3.2%였다.").unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let tokenizer = BigramTokenizer;
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &tokenizer,
+        kiwi: None,
+    };
+    pipeline.index_directory(dir.path()).unwrap();
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: None,
+    };
+    let result = search
+        .search(&SearchRequest {
+            query: "3.2%".to_string(),
+            mode: SearchMode::Content,
+            limit: 10,
+        })
+        .unwrap();
+
+    assert_eq!(result.hits.len(), 1, "히트: {:?}", result.hits);
+    let snippet = result.hits[0].snippet.as_deref().unwrap_or_default();
+    assert!(
+        snippet.contains(">>3.2%<<"),
+        "강조에 %가 포함되지 않음: {snippet:?}"
+    );
+}
+
+#[test]
 fn skips_oversized_and_excluded_files() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("archive.zip"), b"not a real zip").unwrap();

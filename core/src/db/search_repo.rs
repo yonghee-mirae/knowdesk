@@ -39,6 +39,22 @@ impl SearchRepository {
         Ok(())
     }
 
+    /// 경로 하나의 파일명 색인을 지운다 (파일 삭제/이동 감시 시 사용).
+    pub fn remove_filename(conn: &Connection, path: &str) -> rusqlite::Result<()> {
+        conn.execute("DELETE FROM filename_fts WHERE path = ?1", params![path])?;
+        Ok(())
+    }
+
+    /// 문서 하나의 본문 색인을 지운다 (그 문서를 참조하는 경로가 하나도 안 남았을
+    /// 때 `DocumentRepository::remove_path`가 정리 차원에서 호출한다).
+    pub fn remove_content(conn: &Connection, document_id: &str) -> rusqlite::Result<()> {
+        conn.execute(
+            "DELETE FROM content_fts WHERE document_id = ?1",
+            params![document_id],
+        )?;
+        Ok(())
+    }
+
     /// 본문 색인. 문서는 내용 기준(document_id)이라 기존 행을 지우고 다시 넣는다.
     /// `morph_kiwi`는 Kiwi를 못 쓰는 환경이면 빈 문자열이다.
     pub fn index_content(

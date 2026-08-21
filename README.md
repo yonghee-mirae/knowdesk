@@ -78,7 +78,16 @@ Kiwi가 실제로 동작 중이면 둘 다 `공사보고서.txt`를 찾는다 �
 | `index <경로>` | 폴더를 스캔해 색인 |
 | `search <검색어> [--mode filename\|content] [--limit N]` | 검색 (기본: content 모드) |
 | `stats` | 계층별(FULL/META/SKIP) 색인 건수 |
+| `watch <경로> [--debounce-ms N]` | 폴더를 계속 감시하며 변경을 즉시 색인 (Ctrl+C로 종료, 기본 디바운스 3000ms) |
 | `bench` | 벤치마크 (Phase B5에서 구현 예정, 현재 스텁) |
+
+`watch`는 먼저 전체 스캔을 한 번 하고(감시가 꺼져 있던 동안의 변경 반영), 그 뒤로는 생성·수정·삭제만 반영한다. 파일 삭제 시 그 문서를 참조하는 다른 경로가 더 없으면 색인에서도 완전히 지운다(orphan 정리). 예:
+
+```bash
+cargo run -p knowdesk-cli -- --db ./watch.db watch ./samples &
+echo "새 문서" > ./samples/새문서.txt   # 잠시 후 자동 색인됨
+rm ./samples/새문서.txt                # 잠시 후 색인에서도 사라짐
+```
 
 검색 필터는 `docs/05_Search_Language_v1.md` 문법을 그대로 따른다: `ext:pdf`, `path:리서치`, `tier:full`, `drm:true`, `modified>2026-01-01` 등을 검색어에 함께 넣으면 된다.
 

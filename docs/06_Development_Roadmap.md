@@ -76,11 +76,15 @@ v1.1 개정 — M0~M15 선형 순서 대신, **동작하는 end-to-end 파이프
 - Synonym Engine (질의 시점 확장)
 - 2026-08-21: 지금은 이 기능이 필요하지 않다는 판단에 따라 `SynonymDictionary` 트레이트(`core/src/nlp/synonym.rs`)만 정의하고 실제 구현(사전 파일 형식, 로딩, `search::service` 연결)은 보류. `KnowDesk_추가검토사항.md` D-3(사용자 등록 기능 제공 여부)도 여전히 미결이라, 구현 시점에 그것부터 정해야 한다.
 
-## B4 File Monitoring
+## B4 File Monitoring (완료)
 
 - FileSystemWatcher (notify)
 - EventQueue
 - Debounce (Office 저장 시 임시파일 폭풍 대응 — 필수)
+- ⚠️ 디바운스는 `notify-debouncer-mini`/`-full` 둘 다 안 쓰고 **직접 구현**했다 — 처음엔 `notify-debouncer-mini`로 구현했다가 **무한 재색인 루프**를 실제로 재현했다. Linux inotify 백엔드는 `OPEN`/`ATTRIB`(접근·메타데이터 변경)까지 기본으로 감시하는데, 색인 파이프라인이 파일을 읽는 것(해시 계산, 텍스트 추출) 자체가 `OPEN` 이벤트를 만들어 "읽음→이벤트 발생→재색인→다시 읽음"이 끝없이 돈다. `notify-debouncer-full`도 소스를 확인해봤는데 `EventKind::Access`/`Modify(Metadata)`를 걸러내지 않아 동일한 문제가 있다. 그래서 원시 `notify::Event`를 직접 받아 `EventKind`로 필터링(Create/Remove/Modify(Data\|Name)만 통과)한 뒤 직접 디바운스한다 (`core/src/index/watcher.rs`). 문서 식별이 경로가 아니라 내용 해시 기준이라 rename 전용 추적(`-full`이 제공하는 기능)도 필요 없다.
+- ⚠️ **경로 정규화 버그 발견·수정 (2026-08-21):** `watch` 사용 중 사용자가 실제로 겪은 버그 — 파일 내용을 수정해도 예전 내용이 검색에 영구히 남았다. 원인: 최초 전체 스캔(`run_index`)은 사용자가 준 경로 문자열(예: `./samples/x.txt`)을 그대로 쓰지만, `notify`가 그 뒤 변경을 알릴 땐 현재 작업 디렉터리를 붙인 경로(`/현재/디렉터리/./samples/x.txt`)로 이벤트를 준다. `paths` 테이블은 경로 문자열이 기본 키라서 같은 파일이 문서 두 개로 나뉘어 색인되고, 내용이 바뀌어도 예전 문서가 정리되지 않은 채 검색에 계속 노출됐다. `IndexPipeline::index_file`/`queue`에서 경로를 항상 `canonicalize`하도록 고쳤다(`core/src/index/mod.rs`의 `canonical_path`) — 삭제된 파일은 canonicalize가 안 되므로 부모 디렉터리만 canonicalize해서 재구성한다.
+- 문서 삭제 시 orphan 정리(`DocumentRepository::remove_path`) — 다른 경로가 그 문서를 더 안 참조하면 `documents`/`content_fts`/`document_bodies`까지 정리. 네트워크 드라이브 대량 오프라인과 실제 삭제를 구분하는 문제(D-1, 미결)는 범위 밖 — 지금은 경로 하나가 사라지면 그대로 삭제로 처리한다.
+- 헤드리스 검증용 `cli watch <경로>` 서브커맨드 추가.
 
 ## B5 Benchmark
 

@@ -102,13 +102,17 @@ TASK-507 스니펫 원문 강조 보강 — 리터럴 검색어 → Kiwi 분석 
 
 ---
 
-## Monitoring
+## Monitoring (완료)
 
-TASK-301 Implement FileSystemWatcher (`notify`)
+TASK-301 Implement FileSystemWatcher (`notify`) — 완료 (`core/src/index/watcher.rs`)
 
-TASK-302 Implement EventQueue
+TASK-302 Implement EventQueue — 완료 (`core/src/index/queue.rs`), 문서 삭제 시 orphan 정리 포함
 
-TASK-303 Debounce (Office 저장 시 임시파일 폭풍 대응)
+TASK-303 Debounce (Office 저장 시 임시파일 폭풍 대응) — 완료. `notify-debouncer-mini`/`-full` 둘 다 무한 재색인 루프 문제가 있어(직접 확인) 직접 구현으로 변경. 상세 근거는 `06_Development_Roadmap.md` B4 참조
+
+TASK-304 `cli watch` 서브커맨드 — 완료 (헤드리스 검증용)
+
+TASK-305 경로 정규화 버그 수정 — 완료. 최초 스캔(사용자가 준 경로)과 `notify` 이벤트(cwd를 붙인 경로)의 문자열 표현이 달라 같은 파일이 문서 두 개로 나뉘어 색인되고, 내용을 수정해도 예전 내용이 검색에 영구히 남는 버그를 실사용 중 발견. `canonical_path`(`core/src/index/mod.rs`)로 수정, 상세 근거는 `06_Development_Roadmap.md` B4 참조
 
 ---
 

@@ -2,6 +2,7 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::db::search_repo::SearchRepository;
 use crate::DocId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +150,48 @@ impl DocumentRepository {
             ],
         )?;
         Ok(())
+    }
+
+    /// 경로가 사라졌을 때 호출한다 (파일 감시, B4). 그 경로를 지우고, 참조하던
+    /// 문서를 더 이상 아무 경로도 가리키지 않게 되면(orphan) `documents`/
+    /// `content_fts`/`document_bodies`까지 함께 정리한다. 동일 내용의 사본이
+    /// 다른 경로에도 있으면(예: 파일 복사본) 그 문서는 그대로 남는다.
+    ///
+    /// 네트워크 드라이브가 한꺼번에 오프라인되는 것과 실제 삭제를 구분하는 문제는
+    /// 미결 상태다(`KnowDesk_추가검토사항.md` D-1) — 지금은 감시 대상 경로 하나가
+    /// 사라지면 그대로 삭제로 처리한다.
+    pub fn remove_path(conn: &Connection, path: &str) -> rusqlite::Result<Option<DocId>> {
+        let document_id: Option<String> = conn
+            .query_row(
+                "SELECT document_id FROM paths WHERE path = ?1",
+                params![path],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(document_id) = document_id else {
+            return Ok(None);
+        };
+
+        conn.execute("DELETE FROM paths WHERE path = ?1", params![path])?;
+        SearchRepository::remove_filename(conn, path)?;
+
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM paths WHERE document_id = ?1",
+            params![document_id],
+            |row| row.get(0),
+        )?;
+        if remaining == 0 {
+            SearchRepository::remove_content(conn, &document_id)?;
+            conn.execute(
+                "DELETE FROM document_bodies WHERE document_id = ?1",
+                params![document_id],
+            )?;
+            conn.execute(
+                "DELETE FROM documents WHERE document_id = ?1",
+                params![document_id],
+            )?;
+        }
+        Ok(Some(document_id))
     }
 
     /// 색인 요약: (tier, 건수) 목록. `추가검토사항.md` B-3의 요약 문구 형식을 위한 것.

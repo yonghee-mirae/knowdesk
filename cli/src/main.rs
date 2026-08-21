@@ -10,6 +10,8 @@ use knowdesk_core::extract::txt::TxtExtractor;
 use knowdesk_core::extract::xlsx::XlsxExtractor;
 use knowdesk_core::extract::ContentExtractor;
 use knowdesk_core::index::pipeline::IndexPipeline;
+use knowdesk_core::index::queue;
+use knowdesk_core::index::watcher::FileWatcher;
 use knowdesk_core::nlp::bigram::BigramTokenizer;
 use knowdesk_core::nlp::kiwi::KiwiTokenizer;
 use knowdesk_core::nlp::Tokenizer;
@@ -44,6 +46,13 @@ enum Command {
     },
     /// 색인 통계를 출력한다.
     Stats,
+    /// 폴더를 계속 감시하며 변경을 즉시 색인한다 (Ctrl+C로 종료).
+    Watch {
+        path: PathBuf,
+        /// 짧은 시간에 몰리는 이벤트를 하나로 합칠 시간 창 (밀리초).
+        #[arg(long, default_value_t = 3000)]
+        debounce_ms: u64,
+    },
     /// 색인/검색 벤치마크. Phase B(B5)에서 구현 예정.
     Bench,
 }
@@ -70,6 +79,7 @@ fn main() -> anyhow::Result<()> {
         Command::Index { path } => run_index(&db, &config, &path)?,
         Command::Search { query, mode, limit } => run_search(&db, &query, mode, limit)?,
         Command::Stats => run_stats(&db)?,
+        Command::Watch { path, debounce_ms } => run_watch(&db, &config, &path, debounce_ms)?,
         Command::Bench => println!("bench는 Phase B(B5)에서 구현 예정입니다."),
     }
 
@@ -96,14 +106,18 @@ fn load_kiwi() -> Option<KiwiTokenizer> {
     }
 }
 
-fn run_index(db: &Db, config: &Config, path: &Path) -> anyhow::Result<()> {
-    let extractors: Vec<Box<dyn ContentExtractor>> = vec![
+fn default_extractors() -> Vec<Box<dyn ContentExtractor>> {
+    vec![
         Box::new(TxtExtractor),
         Box::new(XlsxExtractor),
         Box::new(DocxExtractor),
         Box::new(PptxExtractor),
         Box::new(PdfExtractor),
-    ];
+    ]
+}
+
+fn run_index(db: &Db, config: &Config, path: &Path) -> anyhow::Result<()> {
+    let extractors = default_extractors();
     let bigram = BigramTokenizer;
     let kiwi = load_kiwi();
     let pipeline = IndexPipeline {
@@ -121,6 +135,35 @@ fn run_index(db: &Db, config: &Config, path: &Path) -> anyhow::Result<()> {
         outcome.meta,
         outcome.skip
     );
+    Ok(())
+}
+
+fn run_watch(db: &Db, config: &Config, path: &Path, debounce_ms: u64) -> anyhow::Result<()> {
+    // 감시 시작 전에 먼저 전체 스캔 — 감시 중에 놓친(꺼져 있던 동안의) 변경을
+    // 반영하고, 이후엔 변경분만 반영한다.
+    run_index(db, config, path)?;
+
+    let extractors = default_extractors();
+    let bigram = BigramTokenizer;
+    let kiwi = load_kiwi();
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config,
+        extractors: &extractors,
+        bigram: &bigram,
+        kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
+    };
+
+    let watcher = FileWatcher::new(path, std::time::Duration::from_millis(debounce_ms))?;
+    println!("변경 감시 중: {} (Ctrl+C로 종료)", path.display());
+    while let Some(events) = watcher.recv() {
+        for (path, result) in queue::drain(&pipeline, events) {
+            match result {
+                Ok(outcome) => println!("{}: {outcome:?}", path.display()),
+                Err(e) => eprintln!("{}: 오류 {e}", path.display()),
+            }
+        }
+    }
     Ok(())
 }
 

@@ -3,7 +3,7 @@
 use rusqlite::Connection;
 use std::path::Path;
 
-use super::{IndexError, IndexService};
+use super::{canonical_path, IndexError, IndexService};
 use crate::config::Config;
 use crate::db::documents::{
     DemotionReason, DocumentRecord, DocumentRepository, IndexStatus, IndexTier, PathRecord,
@@ -55,6 +55,9 @@ impl<'a> IndexPipeline<'a> {
 
     /// 파일 하나를 색인하고 결정된 계층을 반환한다.
     pub fn index_file(&self, path: &Path) -> Result<IndexTier, IndexError> {
+        // 상대/절대 경로 표현 차이로 같은 파일이 다른 문서로 색인되는 걸 막는다
+        // (`canonical_path` 참조).
+        let path = &canonical_path(path);
         let metadata = std::fs::metadata(path)?;
         let file_size = metadata.len();
 

@@ -59,10 +59,12 @@
 | XLSX | `calamine` 0.36 | 순수 Rust |
 | DOCX/PPTX | `zip` + `quick-xml` 0.41 | **`docx-rs`는 이름과 달리 writer라 부적합** |
 | TXT 인코딩 | `encoding_rs` + `chardetng` | CP949/EUC-KR 대응 (아래 참조) |
-| 파일 감시 | `notify` | FileSystemWatcher의 크로스플랫폼 대체 |
+| 파일 감시 | `notify` 8.2 (디바운스는 `-mini`/`-full` 없이 직접 구현) | FileSystemWatcher의 크로스플랫폼 대체 |
 | UI/패키징 | Tauri 2 + TS/Web Components + Vite | lightmark 패턴 재사용. React/Vue 금지 |
 
 `zip` 크레이트는 최신이 `9.0.0-pre3` 프리릴리스이므로 **stable 계열로 고정**할 것.
+
+> **디바운스 직접 구현 (Phase B4, 2026-08-21):** `notify-debouncer-mini`로 처음 구현했다가 **무한 재색인 루프**를 실제로 재현했다. Linux inotify 백엔드는 `OPEN`/`ATTRIB`까지 기본으로 감시하는데, 색인 파이프라인이 파일을 읽는 것(해시 계산, 텍스트 추출) 자체가 `OPEN` 이벤트를 만들어 "읽음→이벤트→재색인→다시 읽음"이 끝없이 돈다. `notify-debouncer-full` 소스도 확인했는데 `EventKind::Other`만 걸러내고 `Access`/`Modify(Metadata)`는 그대로 통과시켜 동일한 문제가 있다. 결론: 이 문제는 어떤 디바운서 크레이트를 쓰든 피할 수 없고(둘 다 원시 이벤트 필터링 지점을 안 열어줌), 원시 `notify::Event`를 직접 받아 `EventKind`로 필터링한 뒤 직접 디바운스해야 한다(`core/src/index/watcher.rs`). rename 전용 추적(`-full`이 제공)은 문서 식별이 내용 해시 기준이라 필요 없다.
 
 ### 문서에 없으나 반드시 필요한 것
 

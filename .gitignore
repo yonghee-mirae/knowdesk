@@ -19,6 +19,8 @@ src-tauri/target/
 # 수동 테스트 산출물 (core/examples/gen_samples.rs로 재생성 가능)
 /samples/
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 
 # 로컬 개발용 네이티브 PDFium/Kiwi 라이브러리 (배포판은 인스톨러가 동봉, `03_Architecture.md` 참조)

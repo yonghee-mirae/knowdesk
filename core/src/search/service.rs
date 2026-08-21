@@ -101,6 +101,14 @@ impl<'a> SqliteSearchService<'a> {
                 }
             }
 
+            // FTS5의 snippet()은 자체 토크나이저 기준으로 강조 범위를 정해서,
+            // "%"처럼 토큰에 안 들어가는 문자가 검색어의 일부인데도 강조 밖에
+            // 남을 수 있다(예: "3.2%" 검색 시 >>3.2<<%). 강조 바로 뒤가 검색어의
+            // 나머지와 그대로 이어지면 강조 범위를 넓힌다.
+            if !needles.is_empty() {
+                row.snippet = row.snippet.map(|s| widen_highlights(&s, &needles));
+            }
+
             hits.push(to_hit(row, match_kind));
         }
 
@@ -199,6 +207,70 @@ fn build_snippet(body: &str, start: usize, len: usize) -> String {
         snippet.push_str("...");
     }
     snippet
+}
+
+/// 강조(`>>...<<`) 구간 바로 다음 글자들이, 그 강조된 텍스트를 접두로 하는
+/// `needle`의 나머지 부분과 그대로 이어지면 강조를 그만큼 넓힌다. FTS5의
+/// snippet()은 자체 토크나이저 기준으로 강조 범위를 정하다 보니, "3.2%"처럼
+/// 토큰에 안 들어가는 문자(%)가 검색어의 일부인데도 강조 밖에 남는 경우가
+/// 있다(`>>3.2<<%`) — 이런 경우를 사람이 보기에 자연스럽게 고친다.
+fn widen_highlights(snippet: &str, needles: &[String]) -> String {
+    let needle_chars: Vec<Vec<char>> = needles.iter().map(|n| n.chars().collect()).collect();
+    let chars: Vec<char> = snippet.chars().collect();
+
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i..].starts_with(&['>', '>']) {
+            let content_start = i + 2;
+            let Some(gap) = chars[content_start..]
+                .windows(2)
+                .position(|w| w == ['<', '<'])
+            else {
+                out.extend(&chars[i..]);
+                break;
+            };
+            let content_end = content_start + gap;
+            let highlighted = &chars[content_start..content_end];
+            let after = &chars[content_end + 2..];
+
+            let extra = needle_chars
+                .iter()
+                .filter_map(|needle| {
+                    if needle.len() <= highlighted.len() {
+                        return None;
+                    }
+                    let prefix_matches = highlighted
+                        .iter()
+                        .zip(needle)
+                        .all(|(h, n)| h.eq_ignore_ascii_case(n));
+                    if !prefix_matches {
+                        return None;
+                    }
+                    let remainder = &needle[highlighted.len()..];
+                    if after.len() < remainder.len() {
+                        return None;
+                    }
+                    let suffix_matches = after[..remainder.len()]
+                        .iter()
+                        .zip(remainder)
+                        .all(|(a, r)| a.eq_ignore_ascii_case(r));
+                    suffix_matches.then_some(remainder.len())
+                })
+                .max()
+                .unwrap_or(0);
+
+            out.push_str(">>");
+            out.extend(highlighted);
+            out.extend(&after[..extra]);
+            out.push_str("<<");
+            i = content_end + 2 + extra;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// `needle`이 `haystack` 안에 있는 첫 글자 위치(문자 단위 인덱스, 바이트 아님)를

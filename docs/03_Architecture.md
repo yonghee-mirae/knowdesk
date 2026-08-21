@@ -103,6 +103,10 @@ Application
 
 비동기 처리
 
+`core/src/index/queue.rs`(Phase B4). `notify` 이벤트를 디바운스한 경로 묶음을 받아 파일별로 `IndexPipeline::index_file`(존재하면) 또는 `DocumentRepository::remove_path`(사라졌으면)로 분기한다. 문서 삭제 시 그 문서를 참조하는 다른 경로가 더 없으면 `documents`/`content_fts`/`document_bodies`까지 정리(orphan GC) — 단, 네트워크 드라이브 대량 오프라인과 실제 삭제를 구분하는 문제(D-1, 미결)는 다루지 않는다.
+
+`paths` 테이블은 경로 문자열이 기본 키인데, 최초 전체 스캔(사용자가 준 경로 그대로)과 `notify` 이벤트(cwd를 붙인 경로)가 같은 파일을 다른 문자열로 표현할 수 있다 — 실사용 중 이 때문에 같은 파일이 문서 두 개로 나뉘어 색인되고, 내용을 수정해도 예전 내용이 검색에 영구히 남는 버그가 실제로 있었다. `IndexPipeline::index_file`과 `queue`가 경로를 항상 `canonical_path`(`core/src/index/mod.rs`)로 정규화하도록 고쳤다 — 파일이 있으면 그대로 canonicalize, 삭제돼서 canonicalize가 안 되면 부모 디렉터리만 canonicalize해서 재구성한다.
+
 ---
 
 # Extraction Layer
@@ -174,6 +178,8 @@ pub trait DocumentStore {
 ## SQLite (rusqlite, bundled FTS5)
 
 ## notify (파일 감시 — FileSystemWatcher의 크로스플랫폼 대체)
+
+`core/src/index/watcher.rs`(Phase B4). 디바운스는 `notify-debouncer-mini`/`-full` 둘 다 안 쓰고 직접 구현했다 — 둘 다 원시 이벤트를 걸러줄 지점을 열어주지 않아서, 색인 파이프라인이 파일을 읽는 것(해시 계산, 텍스트 추출) 자체가 만드는 `OPEN`/`ATTRIB` 이벤트까지 그대로 디바운스에 들어가 **무한 재색인 루프**가 생긴다(실제로 재현·확인함, `notify-debouncer-full`의 `add_event`도 `EventKind::Other`만 걸러내고 `Access`/`Modify(Metadata)`는 catch-all로 통과시킨다). 그래서 원시 `notify::Event`를 직접 받아 `EventKind`로 필터링(`Create`/`Remove`/`Modify(Data|Name)`만 통과)한 뒤 "마지막 이벤트 후 조용해지면 확정"하는 단순한 디바운스를 직접 구현한다. rename 전용 추적은 필요 없다 — 문서 식별이 경로가 아니라 내용 해시(SHA256) 기준이라, rename도 "옛 경로 제거 + 새 경로 추가"로 자연스럽게 처리된다.
 
 ## Kiwi (kiwi-rs, 오프라인 모델 동봉)
 

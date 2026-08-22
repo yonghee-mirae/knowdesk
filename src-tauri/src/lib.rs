@@ -116,22 +116,25 @@ fn db_path() -> PathBuf {
     app_data_dir().join("knowdesk.db")
 }
 
-/// Per-OS app-data directory shared by `db_path()` and `config_path()`.
+/// Per-OS app-data directory shared by `db_path()` and `settings_path()` - both are
+/// inherently machine-local (the DB is large and rebuildable, and `watched_folders`
+/// holds absolute paths that only make sense on this machine), so neither belongs in
+/// a roaming/synced profile location even where the OS distinguishes one.
 fn app_data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("KnowDesk")
 }
 
-/// `KNOWDESK_CONFIG_PATH` overrides the config file location, same convention as
+/// `KNOWDESK_SETTINGS_PATH` overrides the settings file location, same convention as
 /// `KNOWDESK_DB_PATH` (`db_path()`). There's no Settings Window yet (TASK-704) to
 /// write this file through, so until then a missing file (the common case) just
 /// falls back to `Config::default()` - i.e. no folders watched, nothing indexed.
-fn config_path() -> PathBuf {
-    if let Ok(path) = std::env::var("KNOWDESK_CONFIG_PATH") {
+fn settings_path() -> PathBuf {
+    if let Ok(path) = std::env::var("KNOWDESK_SETTINGS_PATH") {
         return PathBuf::from(path);
     }
-    app_data_dir().join("config.toml")
+    app_data_dir().join("settings.json")
 }
 
 /// Initializes Kiwi from `KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`, same
@@ -259,7 +262,7 @@ fn default_extractors() -> Vec<Box<dyn ContentExtractor>> {
 
 /// Keeps every folder in `Config::watched_folders` indexed for the rest of the
 /// process's lifetime: an initial full scan, then continuous watching. A no-op
-/// if the list is empty (the common case today - see `config_path()`).
+/// if the list is empty (the common case today - see `settings_path()`).
 ///
 /// One thread total, not one per folder: `FileWatcher::new` accepts multiple
 /// roots on a single underlying watcher (`core/src/index/watcher.rs`), which
@@ -320,10 +323,19 @@ pub fn run() {
         // Best-effort - `Db::open` below fails loudly if this didn't work.
         let _ = std::fs::create_dir_all(parent);
     }
-    let config = Config::load(Some(&config_path())).unwrap_or_else(|e| {
-        eprintln!("Failed to load config, using defaults: {e}");
+    let config = Config::load(Some(&settings_path())).unwrap_or_else(|e| {
+        eprintln!("Failed to load settings, using defaults: {e}");
         Config::default()
     });
+    // Opens (creating the file/schema/WAL mode if this is the first run) and
+    // immediately drops a connection before `SearchWorker`/the index worker open
+    // their own - otherwise two connections racing to switch a brand-new DB file
+    // into WAL mode at the same moment can hit `SQLITE_BUSY` even with a
+    // `busy_timeout` set (confirmed in practice: switching journal mode isn't
+    // covered by the normal busy-retry path the way an ordinary read/write is).
+    // Once the file/schema/WAL mode already exist, later connections opening
+    // concurrently no longer hit this.
+    Db::open(&db_path).expect("failed to open index DB");
     spawn_index_worker(db_path.clone(), config);
     let worker = SearchWorker::spawn(db_path);
 

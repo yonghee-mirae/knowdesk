@@ -146,7 +146,7 @@ TASK-703 Preview Pane (+ Highlight + Snippet)
 
 TASK-705 File/Folder Actions (Open File / Open Folder / Copy Path — 키보드 전용)
 
-TASK-706 Index Worker (완료) — `src-tauri`에 배선된 색인/감시 백그라운드 워커. `Config.watched_folders` 목록을 앱 시작 시 전체 스캔 후 계속 감시(`core/src/index/watcher.rs`의 `FileWatcher::new`가 폴더 여러 개를 한 watcher/스레드에 묶어, 폴더 수만큼 `KiwiTokenizer` 인스턴스가 늘어나는 것을 막음). 폴더 목록을 채우는 UI(TASK-704)가 아직 없어서, 지금은 `KNOWDESK_CONFIG_PATH`(또는 기본 위치의 `config.toml`)를 직접 편집해야 동작함 — 목록이 비어 있으면(기본값) 워커 자체가 안 뜬다.
+TASK-706 Index Worker (완료) — `src-tauri`에 배선된 색인/감시 백그라운드 워커. `Config.watched_folders` 목록을 앱 시작 시 전체 스캔 후 계속 감시(`core/src/index/watcher.rs`의 `FileWatcher::new`가 폴더 여러 개를 한 watcher/스레드에 묶어, 폴더 수만큼 `KiwiTokenizer` 인스턴스가 늘어나는 것을 막음). 폴더 목록을 채우는 UI(TASK-704)가 아직 없어서, 지금은 `KNOWDESK_SETTINGS_PATH`(또는 기본 위치의 `settings.json` — 색인 DB와 같은 폴더, 2026-08-22 결정)를 직접 편집해야 동작함 — 목록이 비어 있으면(기본값) 워커 자체가 안 뜬다.
 
 TASK-704 Settings Window — TASK-706이 이미 배선해 둔 `Config.watched_folders`에 UI로 폴더를 추가/제거하기만 하면 됨
 

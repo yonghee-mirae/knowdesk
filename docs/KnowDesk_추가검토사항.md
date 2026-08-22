@@ -257,6 +257,8 @@ DRM 문서는 본문 색인을 포기하고 메타데이터만 색인하는 방�
 
 > 제외 패턴이 없으면 임시파일·백업본이 색인되어 검색 품질과 성능이 동시에 저하된다.
 
+> **결정 (2026-08-22):** 설정 파일 형식·위치 — `settings.json`(JSON), 색인 DB(`knowdesk.db`)와 같은 폴더(OS별 로컬 앱데이터 디렉터리: Windows `%LOCALAPPDATA%\KnowDesk`, macOS `~/Library/Application Support/KnowDesk`, Linux `$XDG_DATA_HOME/KnowDesk`). DB·설정 둘 다 이 PC에서만 의미 있는 값(색인 대상 폴더 절대경로 등)이라 Windows Roaming(`%APPDATA%`) 같은 동기화 프로필 위치에는 두지 않기로 함. `core::config::Config`(`core/src/config.rs`)가 구조체·로딩을 담당, 실제 경로 결정은 `src-tauri::settings_path()`.
+
 ## E-2. 온보딩 첫 경험
 
 설치 직후는 초기 색인이 완료되기 전이므로 검색이 사실상 동작하지 않는다. 제품 이탈이 가장 많이 발생하는 구간이다.

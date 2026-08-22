@@ -18,7 +18,7 @@ anyhow = "1"
 tracing = "0.1"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+serde_json = "1"
 calamine = "0.36"
 zip = "8"
 quick-xml = "0.41"

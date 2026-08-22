@@ -129,7 +129,7 @@ DRM을 논외로 하면 최대 리스크는 PDF 한글 추출 품질이다. 본�
 
 ## C5 Settings & Diagnostics
 
-- Index Worker (완료, TASK-706) — `src-tauri`가 `Config.watched_folders`를 읽어 시작 시 전체 스캔 + 이후 계속 감시. Settings Window(폴더 등록 UI)가 아직 없어 지금은 `config.toml`을 직접 편집해야 함
+- Index Worker (완료, TASK-706) — `src-tauri`가 `Config.watched_folders`를 읽어 시작 시 전체 스캔 + 이후 계속 감시. Settings Window(폴더 등록 UI)가 아직 없어 지금은 `settings.json`(색인 DB와 같은 폴더)을 직접 편집해야 함
 - Settings Window
 - Statistics
 - Logs

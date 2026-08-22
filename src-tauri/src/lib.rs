@@ -757,9 +757,7 @@ pub fn run() {
 mod tests {
     use super::*;
     use knowdesk_core::config::Config;
-    use knowdesk_core::db::documents::{
-        DocumentRecord, DocumentRepository, IndexStatus, IndexTier,
-    };
+    use knowdesk_core::db::documents::{DocumentRecord, DocumentRepository, IndexTier};
     use knowdesk_core::extract::txt::TxtExtractor;
     use knowdesk_core::extract::ContentExtractor;
     use knowdesk_core::index::pipeline::IndexPipeline;
@@ -947,8 +945,6 @@ mod tests {
                 file_size: 1,
                 text_bytes: 1,
                 index_tier: IndexTier::Meta,
-                index_status: IndexStatus::MetaIndexed,
-                demotion_reason: None,
             },
         )
         .unwrap();

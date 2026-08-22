@@ -320,8 +320,8 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         db.conn
             .execute(
-                "INSERT INTO documents (document_id, file_size, text_bytes, index_tier, index_status)
-                 VALUES ('doc1', 0, 0, 'FULL', 'INDEXED')",
+                "INSERT INTO documents (document_id, file_size, text_bytes, index_tier)
+                 VALUES ('doc1', 0, 0, 'FULL')",
                 [],
             )
             .unwrap();
@@ -359,16 +359,20 @@ mod tests {
         // `MATCH ''` outright ("fts5: syntax error near ''") — there was no way to
         // browse "everything of this extension" without a keyword.
         let db = Db::open_in_memory().unwrap();
-        db.conn.execute(
-            "INSERT INTO documents (document_id, file_size, text_bytes, index_tier, index_status)
-             VALUES ('full1', 0, 0, 'FULL', 'INDEXED')",
-            [],
-        ).unwrap();
-        db.conn.execute(
-            "INSERT INTO documents (document_id, file_size, text_bytes, index_tier, index_status)
-             VALUES ('meta1', 0, 0, 'META', 'META_INDEXED')",
-            [],
-        ).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO documents (document_id, file_size, text_bytes, index_tier)
+             VALUES ('full1', 0, 0, 'FULL')",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO documents (document_id, file_size, text_bytes, index_tier)
+             VALUES ('meta1', 0, 0, 'META')",
+                [],
+            )
+            .unwrap();
         db.conn.execute(
             "INSERT INTO paths (path, document_id, filename, extension, modified_at, seen_at)
              VALUES ('/a/규정.txt', 'full1', '규정.txt', 'txt', '2026-08-10T00:00:00Z', '2026-08-10T00:00:00Z')",
@@ -397,11 +401,13 @@ mod tests {
     #[test]
     fn search_content_with_only_filters_dedupes_by_document() {
         let db = Db::open_in_memory().unwrap();
-        db.conn.execute(
-            "INSERT INTO documents (document_id, file_size, text_bytes, index_tier, index_status)
-             VALUES ('doc1', 0, 0, 'FULL', 'INDEXED')",
-            [],
-        ).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO documents (document_id, file_size, text_bytes, index_tier)
+             VALUES ('doc1', 0, 0, 'FULL')",
+                [],
+            )
+            .unwrap();
         // Same document reachable via two paths — must appear once, not twice.
         db.conn.execute(
             "INSERT INTO paths (path, document_id, filename, extension, modified_at, seen_at)

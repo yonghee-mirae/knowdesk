@@ -86,6 +86,8 @@ KnowDesk는 사용자가 지정한 폴더를 자동으로 색인하고, 전역 �
 - XLSX
 - TXT
 
+⚠️ **결정 (2026-08-24):** TXT와 함께 Markdown(`.md`)도 지원 포맷에 추가한다 - Markdown 원문을 그대로 일반 텍스트로 색인한다(마크다운 문법을 걷어내는 별도 파싱 없음). 구현은 `core::extract::txt::TxtExtractor`가 `.txt`와 함께 `.md`도 처리(`docs/07_Coding_Agent_Backlog.md` 참조). 구버전 Office 포맷(`.doc`/`.xls`/`.ppt`)은 여전히 범위 밖.
+
 지원 기능
 
 - 신규 파일 감지
@@ -151,6 +153,8 @@ KnowDesk는 사용자가 지정한 폴더를 자동으로 색인하고, 전역 �
 - zip
 - 7z
 - rar
+
+⚠️ **결정 (2026-08-24):** 압축 파일 확장자 자체를 별도 설정값(`excluded_extensions`)으로 관리하던 걸 없앴다 - 지원 포맷이 고정된 화이트리스트(PDF/DOCX/PPTX/XLSX/TXT/MD, `core::index::pipeline`에 등록된 `ContentExtractor` 목록)가 되면서, zip/7z/rar처럼 그 목록 밖의 확장자는 이 규칙이 없어도 이미 "미지원 포맷"으로 Skip되기 때문에 별도 확장자 차단 목록은 중복이었다(`core/src/scan/filter.rs` 참조). 임시 파일 패턴은 그대로 유지 - 확장자는 지원 대상이어도(예: `~$문서.docx`) 파일명 패턴만으로 걸러내야 하는, 화이트리스트로는 대체할 수 없는 별개의 문제라서.
 
 임시 파일
 

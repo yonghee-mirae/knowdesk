@@ -13,6 +13,21 @@ const MIGRATIONS: &[(i64, &str)] = &[
     // (`docs/05_Search_Language_v1.md`, Filename Mode) - `filename_fts` is no longer
     // read or written anywhere, so drop it.
     (2, "DROP TABLE IF EXISTS filename_fts;"),
+    // Six `documents` columns that were never actually read or written by any code
+    // path (`core/src/db/schema.rs`'s doc comment on `SCHEMA_V1` has the full
+    // reasoning): `index_status` duplicated `index_tier` one-to-one, `demotion_reason`
+    // only ever held `PARSE_FAIL` or nothing (distinguishing DRM/CORRUPT/ENCRYPTED was
+    // decided unnecessary), and `drm_status`/`retry_count`/`last_attempt_at`/
+    // `content_stored` backed features that were never built.
+    (
+        3,
+        "ALTER TABLE documents DROP COLUMN index_status;
+         ALTER TABLE documents DROP COLUMN demotion_reason;
+         ALTER TABLE documents DROP COLUMN drm_status;
+         ALTER TABLE documents DROP COLUMN retry_count;
+         ALTER TABLE documents DROP COLUMN last_attempt_at;
+         ALTER TABLE documents DROP COLUMN content_stored;",
+    ),
 ];
 
 pub fn run(conn: &Connection) -> rusqlite::Result<()> {
@@ -60,7 +75,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
     }
 
     #[test]
@@ -78,5 +93,50 @@ mod tests {
             )
             .unwrap();
         assert_eq!(exists, 0);
+    }
+
+    #[test]
+    fn drops_unused_documents_columns_left_over_from_v1() {
+        // v1 still creates these columns (historical record) - v3 must clean them
+        // up since none of them was ever actually read or written by any code path
+        // (`core/src/db/schema.rs`'s doc comment on `SCHEMA_V1` has the full reasoning).
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+
+        let mut stmt = conn
+            .prepare("SELECT name FROM pragma_table_info('documents')")
+            .unwrap();
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        for dropped in [
+            "index_status",
+            "demotion_reason",
+            "drm_status",
+            "retry_count",
+            "last_attempt_at",
+            "content_stored",
+        ] {
+            assert!(
+                !columns.contains(&dropped.to_string()),
+                "{dropped} should have been dropped, remaining columns: {columns:?}"
+            );
+        }
+        // Sanity check the columns that must still be there weren't dropped too.
+        for kept in [
+            "document_id",
+            "file_size",
+            "text_bytes",
+            "index_tier",
+            "indexed_at",
+        ] {
+            assert!(
+                columns.contains(&kept.to_string()),
+                "{kept} should still be there, remaining columns: {columns:?}"
+            );
+        }
     }
 }

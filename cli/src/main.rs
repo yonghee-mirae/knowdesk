@@ -237,9 +237,6 @@ fn run_stats(db: &Db) -> anyhow::Result<()> {
     for (tier, count) in tiers {
         println!("{tier}: {count} docs");
     }
-    for (reason, count) in DocumentRepository::count_by_demotion_reason(&db.conn)? {
-        println!("  demotion reason {reason}: {count} docs");
-    }
     Ok(())
 }
 

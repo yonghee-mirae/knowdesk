@@ -145,7 +145,7 @@ C1 레이아웃의 우측 패널. 별도 화면이 아니라 결과 리스트 �
 | mockup 항목 | 처리 |
 |---|---|
 | 색인 대상 폴더 | 이미 반영됨 (`watched_folders`) |
-| 제외 패턴 | **이번에 추가** - `excluded_extensions`/`excluded_temp_patterns` (`Vec<String>`), 기존엔 `core::config::DEFAULT_EXCLUDED_EXTENSIONS`/`DEFAULT_TEMP_PATTERNS`가 고정 상수라 사용자가 바꿀 방법이 없었음. 손으로 편집한 값이 해당 상수 목록을 완전히 대체(병합 아님). 이미 갖고 있는 파일 감시/재적용 경로를 그대로 타므로 재스캔되는 파일부터 바로 적용됨. |
+| 제외 패턴 | **추가했다가 결국 완전히 제거, 설정값 아님** - 처음엔 `excluded_extensions`/`excluded_temp_patterns` 둘 다 `Config` 필드로 추가. 이어서 `excluded_extensions`는 제거(지원 포맷이 고정 화이트리스트 PDF/DOCX/PPTX/XLSX/TXT/MD가 되면서 확장자 차단 목록이 중복, `01_KnowDesk_PRD.md` "기본 제외 규칙" 참조). **마지막으로 `excluded_temp_patterns`도 제거(2026-08-24)** - 패턴(`~$`/`.tmp`/`.temp`/`.cache`) 자체가 고정돼 있어 사용자가 튜닝할 게 없다는 판단으로, `settings.json` 필드가 아니라 `core::config::DEFAULT_TEMP_PATTERNS` 내부 고정값으로 되돌림(`core/src/scan/filter.rs`가 직접 참조). 결과적으로 "제외 패턴"은 설정 화면 mockup엔 있었지만 실제 설정값으로는 끝까지 남지 않았다. |
 | 색인 수행 시간대·리소스 상한 | **비노출 유지** - 열린 질문 #6에서 이미 결정됨 (TASK-306, 상시 스로틀링만 구현 범위) |
 | 전역 단축키 변경 | **이번에 추가** - `hotkey` (`String`), 기존 하드코딩 상수(`DEFAULT_HOTKEY`, 이제 `core::config`로 이동)를 대체. `settings.json` 변경 감지 시 `run()`이 넘긴 콜백(`on_settings_reload`)이 이전 값을 `unregister`하고 새 값을 `register_hotkey`로 재등록 - 재시작 불필요. |
 | 검색 결과 표시 개수 | **이번에 추가** - `result_limit` (`u32`). 기존엔 `frontend/src/main.ts`의 `RESULT_LIMIT` 상수였음. `get_result_limit` 커맨드로 노출, `theme`과 동일하게 페이지 로드+포커스 시점에 다시 읽음. **`0`은 무제한을 뜻하고, 기본값도 무제한(2026-08-24 결정)** - `core::search::SearchRequest::limit`이 `0`(또는 음수)을 SQLite의 "음수 `LIMIT`은 무제한" 관례로 정규화(`SqliteSearchService::search`). |

@@ -31,52 +31,12 @@ impl IndexTier {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IndexStatus {
-    Indexed,
-    MetaIndexed,
-    Failed,
-}
-
-impl IndexStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            IndexStatus::Indexed => "INDEXED",
-            IndexStatus::MetaIndexed => "META_INDEXED",
-            IndexStatus::Failed => "FAILED",
-        }
-    }
-}
-
-/// `demotion_reason` values from `docs/04_Data_Model.md`. `EMPTY_TEXT` is omitted since
-/// it's still an open item not yet reflected in the docs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DemotionReason {
-    Drm,
-    Corrupt,
-    Encrypted,
-    ParseFail,
-}
-
-impl DemotionReason {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            DemotionReason::Drm => "DRM",
-            DemotionReason::Corrupt => "CORRUPT",
-            DemotionReason::Encrypted => "ENCRYPTED",
-            DemotionReason::ParseFail => "PARSE_FAIL",
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct DocumentRecord {
     pub document_id: DocId,
     pub file_size: i64,
     pub text_bytes: i64,
     pub index_tier: IndexTier,
-    pub index_status: IndexStatus,
-    pub demotion_reason: Option<DemotionReason>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,22 +54,18 @@ impl DocumentRepository {
     pub fn upsert_document(conn: &Connection, doc: &DocumentRecord) -> rusqlite::Result<()> {
         conn.execute(
             "INSERT INTO documents
-                (document_id, file_size, text_bytes, index_tier, index_status, demotion_reason, indexed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))
+                (document_id, file_size, text_bytes, index_tier, indexed_at)
+             VALUES (?1, ?2, ?3, ?4, datetime('now'))
              ON CONFLICT(document_id) DO UPDATE SET
                 file_size = excluded.file_size,
                 text_bytes = excluded.text_bytes,
                 index_tier = excluded.index_tier,
-                index_status = excluded.index_status,
-                demotion_reason = excluded.demotion_reason,
                 indexed_at = excluded.indexed_at",
             params![
                 doc.document_id,
                 doc.file_size,
                 doc.text_bytes,
                 doc.index_tier.as_str(),
-                doc.index_status.as_str(),
-                doc.demotion_reason.map(|r| r.as_str()),
             ],
         )?;
         Ok(())
@@ -215,17 +171,6 @@ impl DocumentRepository {
         conn.execute("DELETE FROM documents", [])?;
         Ok(())
     }
-
-    pub fn count_by_demotion_reason(conn: &Connection) -> rusqlite::Result<Vec<(String, i64)>> {
-        let mut stmt = conn.prepare(
-            "SELECT demotion_reason, COUNT(*) FROM documents
-             WHERE demotion_reason IS NOT NULL GROUP BY demotion_reason",
-        )?;
-        let rows = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
-    }
 }
 
 #[cfg(test)]
@@ -243,8 +188,6 @@ mod tests {
                 file_size: 10,
                 text_bytes: 5,
                 index_tier: IndexTier::Full,
-                index_status: IndexStatus::Indexed,
-                demotion_reason: None,
             },
         )
         .unwrap();

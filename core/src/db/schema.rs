@@ -31,6 +31,15 @@ CREATE TABLE IF NOT EXISTS documents
 
     indexed_at TEXT
 );
+-- `index_status`/`demotion_reason`/`drm_status`/`retry_count`/`last_attempt_at`/
+-- `content_stored` are dropped by `db::migrate` MIGRATIONS v3 (2026-08-24 decision):
+-- none of them was ever actually read or written by any code path (`index_status`
+-- duplicated `index_tier` one-to-one and was write-only; `demotion_reason` only ever
+-- held `PARSE_FAIL` or nothing, and distinguishing DRM/CORRUPT/ENCRYPTED was decided
+-- unnecessary; `drm_status`/`retry_count`/`last_attempt_at`/`content_stored` backed
+-- features - a state machine, a retry policy, compressed storage - that were never
+-- built). Left as-is here rather than edited out, since this is the historical
+-- record of what v1 actually applied.
 
 CREATE TABLE IF NOT EXISTS paths
 (

@@ -160,6 +160,10 @@ TASK-704 Settings Window → "설정 파일 폴더 열기"로 대체 (완료, 20
 
 ⚠️ **설정값 완전성 재검토 (2026-08-24):** 폐기된 Settings Window mockup(`12_UI_Spec.md` C5)에 있던 항목들이 실제로 `settings.json`에 다 반영됐는지 전수 점검하고, 빠져 있던 것들을 추가했다 — `core::config::Config`에 `excluded_extensions`/`excluded_temp_patterns`(기존엔 고정 상수), `hotkey`(TASK-802 참조), `result_limit`(기존엔 프론트엔드 상수) 4개 필드 신설. `색인 초기화`는 값이 아니라 동작이라 트레이 메뉴 액션("Reset Index")으로 별도 구현(아래 Tray 섹션). `색인 DB 저장 위치`는 이미 확정된 배제 결정(`core/src/config.rs`의 `db_path` `#[serde(skip)]`)을 그대로 유지, `시작 시 자동 실행`은 새 의존성이 필요한 별도 기능이라 이번 범위에서 제외, `색인 스로틀링 파라미터`는 기존 비노출 결정 유지 - 자세한 표는 `12_UI_Spec.md` C5 참조.
 
+⚠️ **지원 포맷 확정 및 제외 규칙 축소 (2026-08-24, 이어서):** 검색 대상 포맷을 워드/엑셀/파워포인트/PDF/TXT/MD 6종으로 확정(구버전 `.doc`/`.xls`/`.ppt`는 범위 밖) - `core::extract::txt::TxtExtractor`가 `.md`도 `.txt`와 같은 방식(마크다운 문법 파싱 없이 원문 그대로)으로 처리하도록 확장. 그 김에 `excluded_extensions`(zip/7z/rar 차단 목록)를 완전히 제거 - `core::index::pipeline`이 등록된 `ContentExtractor` 중 매칭되는 게 없으면 이미 SKIP시키므로(고정된 지원 포맷 화이트리스트가 사실상의 필터), 별도 확장자 차단 목록은 무의미했다. `excluded_temp_patterns`는 그대로 유지 - `~$문서.docx`처럼 확장자는 지원 대상이어도 파일명 패턴으로만 걸러낼 수 있는 문제라 화이트리스트로 대체 불가(`01_KnowDesk_PRD.md` "기본 제외 규칙" 결정 참조).
+
+⚠️ **`excluded_temp_patterns`도 설정값에서 제거 (2026-08-24, 이어서):** 패턴 목록(`~$`/`.tmp`/`.temp`/`.cache`) 자체가 고정된 값이라 사용자가 바꿀 이유가 없다는 판단 - `Config` 필드를 없애고 `core::scan::filter::check()`가 `core::config::DEFAULT_TEMP_PATTERNS` 상수를 직접 참조하도록 되돌렸다. 걸러내는 로직 자체(임시 파일 스킵)는 그대로, `settings.json`으로 노출만 안 할 뿐.
+
 ⚠️ **후속 조정 (2026-08-24, 이어서):** ①`result_limit`은 `0`을 무제한으로 해석하도록 `core::search::SearchRequest`/`SqliteSearchService`에 정규화 로직 추가(SQLite의 "음수 `LIMIT`은 무제한" 관례로 변환), 기본값도 무제한(`0`)으로 변경. ②하드코딩 값 전체 재검토에서 찾은 `file_watch_debounce_ms`(폴더 감시 debounce, 기존 3000ms 고정)를 설정값으로 추가. ③`settings.json` 자신을 감시하는 워처의 debounce는 설정값으로 빼지 않고 3000ms→200ms 내부 고정값으로만 낮춤 - 사용자가 튜닝할 대상이 아니라는 판단.
 
 ---
@@ -179,6 +183,8 @@ TASK-802 Hotkey Manager (창 사전 생성 + show/focus 방식 — P95 300ms 대
 ## Diagnostics
 
 TASK-901 Statistics Service
+
+⚠️ **`documents` 스키마 축소 (2026-08-24):** `index_status`/`demotion_reason`/`drm_status`/`retry_count`/`last_attempt_at`/`content_stored` 6개 컬럼 제거(`core/src/db/migrate.rs` MIGRATIONS v3, 상세 근거는 `04_Data_Model.md` 변경 이력 참조) - 어느 것도 실제 코드에서 읽거나 쓰인 적이 없었다. 이 통계 서비스(TASK-901)가 구현될 때 `demotion_reason`별 집계(`count_by_demotion_reason`, 제거됨)를 낼 계획이었다면 이제는 낼 수 없다 - 실패 사유 구분 자체가 필요 없다고 결정됐으므로, `index_tier`별 집계(`count_by_tier`, 유지됨)만으로 충분.
 
 TASK-902 Log Export
 

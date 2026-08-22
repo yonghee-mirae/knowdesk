@@ -45,8 +45,8 @@ mod tests {
         // Insert a minimal row first to satisfy the documents FK constraint.
         db.conn
             .execute(
-                "INSERT INTO documents (document_id, file_size, text_bytes, index_tier, index_status)
-                 VALUES ('abc', 0, 0, 'FULL', 'INDEXED')",
+                "INSERT INTO documents (document_id, file_size, text_bytes, index_tier)
+                 VALUES ('abc', 0, 0, 'FULL')",
                 [],
             )
             .unwrap();

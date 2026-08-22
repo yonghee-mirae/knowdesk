@@ -5,9 +5,7 @@ use std::path::Path;
 
 use super::{canonical_path, IndexError, IndexService};
 use crate::config::Config;
-use crate::db::documents::{
-    DemotionReason, DocumentRecord, DocumentRepository, IndexStatus, IndexTier, PathRecord,
-};
+use crate::db::documents::{DocumentRecord, DocumentRepository, IndexTier, PathRecord};
 use crate::db::search_repo::SearchRepository;
 use crate::db::store::{DocumentStore, SqliteDocumentStore};
 use crate::extract::{ContentExtractor, DocumentInfo};
@@ -136,8 +134,6 @@ impl<'a> IndexPipeline<'a> {
                         file_size: file_size as i64,
                         text_bytes: result.body.len() as i64,
                         index_tier: IndexTier::Full,
-                        index_status: IndexStatus::Indexed,
-                        demotion_reason: None,
                     },
                 )?;
                 SqliteDocumentStore { conn: self.conn }.put_body(document_id, &result.body)?;
@@ -159,8 +155,6 @@ impl<'a> IndexPipeline<'a> {
                         file_size: file_size as i64,
                         text_bytes: 0,
                         index_tier: IndexTier::Meta,
-                        index_status: IndexStatus::MetaIndexed,
-                        demotion_reason: Some(DemotionReason::ParseFail),
                     },
                 )?;
                 Ok(IndexTier::Meta)

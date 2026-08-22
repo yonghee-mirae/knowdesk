@@ -1113,3 +1113,44 @@ fn skips_oversized_and_excluded_files() {
     assert_eq!(outcome.full, 0);
     assert_eq!(outcome.skip, 2);
 }
+
+#[test]
+fn indexes_markdown_file_as_plain_text() {
+    // `.md` is indexed as plain text, raw Markdown syntax included - no
+    // Markdown-specific parsing (`TxtExtractor`'s doc comment).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("규정.md"),
+        "# 채권 발행\n\n본 문서는 채권 발행 절차를 규정한다.",
+    )
+    .unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let tokenizer = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &tokenizer,
+        kiwi: None,
+    };
+
+    let outcome = pipeline.index_directory(dir.path()).unwrap();
+    assert_eq!(outcome.full, 1);
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: None,
+    };
+    let result = search
+        .search(&SearchRequest {
+            query: "채권 발행".to_string(),
+            mode: SearchMode::Content,
+            limit: 10,
+        })
+        .unwrap();
+    assert_eq!(result.hits.len(), 1);
+    assert_eq!(result.hits[0].filename, "규정.md");
+}

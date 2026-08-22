@@ -4,12 +4,16 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Default exclusion rules (see PRD Chapter 3 "Default Exclusion Rules") - the
-/// starting values for `Config::excluded_extensions`/`excluded_temp_patterns`,
-/// not fixed rules `core/src/scan/filter.rs` applies on its own anymore. A
-/// hand-edited `settings.json` can freely add to or replace either list.
+/// Default exclusion rules (see PRD Chapter 3 "Default Exclusion Rules").
+///
+/// Neither this nor `DEFAULT_EXCLUDED_EXTENSIONS` (removed) has a `Config`
+/// field - both are fixed, not user-configurable via `settings.json`
+/// (2026-08-24 decision): the temp-file patterns are a known, stable set with
+/// nothing meaningful for a user to tune, and the supported-format allowlist
+/// (docx/xlsx/pptx/pdf/txt/md, `core::index::pipeline`'s registered
+/// `ContentExtractor`s) already makes a separate extension denylist
+/// redundant. `core/src/scan/filter.rs` applies this constant directly.
 pub const DEFAULT_MAX_FILE_SIZE_MB: u64 = 50;
-pub const DEFAULT_EXCLUDED_EXTENSIONS: &[&str] = &["zip", "7z", "rar"];
 pub const DEFAULT_TEMP_PATTERNS: &[&str] = &["~$", ".tmp", ".temp", ".cache"];
 /// `CmdOrCtrl` resolves to `⌘+Option+K` on macOS, `Ctrl+Alt+K` on Windows/Linux
 /// (`src-tauri`'s `register_hotkey` parses this string).
@@ -63,15 +67,6 @@ pub struct Config {
     /// nothing is indexed until at least one folder is listed here.
     pub watched_folders: Vec<PathBuf>,
     pub theme: Theme,
-    /// File extensions to skip during indexing (case-insensitive, no leading
-    /// dot - e.g. `"zip"`). Defaults to `DEFAULT_EXCLUDED_EXTENSIONS`; a
-    /// hand-edited `settings.json` fully replaces this list, it doesn't merge
-    /// with the default.
-    pub excluded_extensions: Vec<String>,
-    /// Filename prefixes/suffixes to skip during indexing (e.g. `"~$"` for Office
-    /// lock files, `".tmp"`). Defaults to `DEFAULT_TEMP_PATTERNS`, same
-    /// replace-not-merge behavior as `excluded_extensions`.
-    pub excluded_temp_patterns: Vec<String>,
     /// Global show/hide hotkey, in `tauri-plugin-global-shortcut`'s string
     /// syntax (`src-tauri`'s `register_hotkey`). Applied live - changing this
     /// and saving re-registers the hotkey without restarting the app.
@@ -97,14 +92,6 @@ impl Default for Config {
             max_file_size_mb: DEFAULT_MAX_FILE_SIZE_MB,
             watched_folders: Vec::new(),
             theme: Theme::default(),
-            excluded_extensions: DEFAULT_EXCLUDED_EXTENSIONS
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-            excluded_temp_patterns: DEFAULT_TEMP_PATTERNS
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
             hotkey: DEFAULT_HOTKEY.to_string(),
             result_limit: DEFAULT_RESULT_LIMIT,
             search_debounce_ms: DEFAULT_SEARCH_DEBOUNCE_MS,
@@ -228,37 +215,6 @@ mod tests {
 
         let reloaded = Config::load(Some(&path)).unwrap();
         assert_eq!(reloaded.theme, Theme::Dark);
-    }
-
-    #[test]
-    fn excluded_extensions_and_temp_patterns_default_and_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.json");
-
-        assert_eq!(
-            Config::default().excluded_extensions,
-            vec!["zip".to_string(), "7z".to_string(), "rar".to_string()]
-        );
-        assert_eq!(
-            Config::default().excluded_temp_patterns,
-            vec![
-                "~$".to_string(),
-                ".tmp".to_string(),
-                ".temp".to_string(),
-                ".cache".to_string()
-            ]
-        );
-
-        let config = Config {
-            excluded_extensions: vec!["bak".to_string()],
-            excluded_temp_patterns: vec!["~".to_string()],
-            ..Config::default()
-        };
-        config.save(&path).unwrap();
-
-        let reloaded = Config::load(Some(&path)).unwrap();
-        assert_eq!(reloaded.excluded_extensions, vec!["bak".to_string()]);
-        assert_eq!(reloaded.excluded_temp_patterns, vec!["~".to_string()]);
     }
 
     #[test]

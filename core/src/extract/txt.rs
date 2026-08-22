@@ -1,4 +1,10 @@
-//! TXT extraction + encoding detection (supports CP949/EUC-KR/UTF-8, via `encoding_rs` + `chardetng`).
+//! TXT (and Markdown) extraction + encoding detection (supports CP949/EUC-KR/UTF-8,
+//! via `encoding_rs` + `chardetng`).
+//!
+//! Markdown (`.md`) is indexed as plain text - its raw source (headers, list
+//! markers, etc. included) is searchable as-is, with no Markdown-specific parsing
+//! to strip syntax or render to plain prose (2026-08-24 decision: the supported
+//! format list is docx/xlsx/pptx/pdf/txt/md).
 
 use super::{ContentExtractor, DocumentInfo, ExtractError, ExtractionResult};
 use chardetng::EncodingDetector;
@@ -8,7 +14,7 @@ pub struct TxtExtractor;
 
 impl ContentExtractor for TxtExtractor {
     fn supports(&self, ext: &str) -> bool {
-        ext.eq_ignore_ascii_case("txt")
+        ext.eq_ignore_ascii_case("txt") || ext.eq_ignore_ascii_case("md")
     }
 
     fn extract(&self, document: &DocumentInfo) -> Result<ExtractionResult, ExtractError> {
@@ -72,9 +78,11 @@ mod tests {
     }
 
     #[test]
-    fn supports_only_txt() {
+    fn supports_txt_and_md() {
         assert!(TxtExtractor.supports("txt"));
         assert!(TxtExtractor.supports("TXT"));
+        assert!(TxtExtractor.supports("md"));
+        assert!(TxtExtractor.supports("MD"));
         assert!(!TxtExtractor.supports("pdf"));
     }
 }

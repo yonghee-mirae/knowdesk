@@ -19,19 +19,14 @@ CREATE TABLE documents
     text_bytes INTEGER,             -- 추출된 본문 크기 (DB 용량 추정/통계용)
 
     index_tier TEXT,                -- FULL | META | SKIP
-    index_status TEXT,              -- 상태 머신, 하단 참조
-
-    demotion_reason TEXT,           -- DRM | CORRUPT | ENCRYPTED | PARSE_FAIL | EMPTY_TEXT
-
-    drm_status TEXT,
-    retry_count INTEGER DEFAULT 0,
-    last_attempt_at DATETIME,
-
-    content_stored INTEGER DEFAULT 1,  -- 1=원문 저장, 0=압축/미저장 (저장 계층 전환용 플래그)
 
     indexed_at DATETIME
 );
 ```
+
+⚠️ **변경 이력(2026-08-24):** `index_status`/`demotion_reason`/`drm_status`/`retry_count`/`last_attempt_at`/`content_stored` 6개 컬럼을 제거했다 - 실제로 어떤 코드도 이 컬럼들을 읽거나 쓴 적이 없었다. `index_status`는 `index_tier`와 항상 1:1로 겹치는 값을 쓰기만 하고 읽은 적이 없었고, `demotion_reason`은 실패 사유를 `DRM`/`CORRUPT`/`ENCRYPTED`로 구분해서 기록한 적이 한 번도 없이 항상 `PARSE_FAIL`뿐이었다(그리고 이제 그 구분 자체가 필요 없다고 결정됨). `drm_status`/`retry_count`/`last_attempt_at`/`content_stored`는 하단의 상태 전이·재시도 정책·저장 계층 전환 같은, 설계 당시 계획했지만 실제로 구현된 적 없는 기능을 위한 자리였다. `core/src/db/migrate.rs` MIGRATIONS v3가 기존 DB에서도 `ALTER TABLE ... DROP COLUMN`으로 정리한다.
+
+⚠️ 아래 "state machine"/`drm_status` 값 목록은 실제로 구현되지 않은 과거 설계로만 남겨둔다(위 변경 이력 참조).
 
 ---
 

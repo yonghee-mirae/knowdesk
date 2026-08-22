@@ -20,15 +20,14 @@ use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 
-/// `docs/12_UI_Spec.md` C4/C5's settings mockup shows `Ctrl+Alt+Space` as the
-/// placeholder default - not yet user-changeable since there's no Settings
-/// Window (TASK-704) to change it from. `CmdOrCtrl` maps that to `⌘+Alt+Space`
-/// on macOS, `Ctrl+Alt+Space` elsewhere.
+/// Not yet user-changeable since there's no Settings Window (TASK-704) to
+/// change it from. `CmdOrCtrl` resolves to `⌘+Option+K` on macOS,
+/// `Ctrl+Alt+K` on Windows/Linux.
 ///
 /// ⚠️ O-7 (`KnowDesk_추가검토사항.md`) - whether global-hotkey hooking is
 /// allowed by IT security policy on the target Windows fleet - is still
 /// unconfirmed. This default is provisional pending that review.
-const DEFAULT_HOTKEY: &str = "CmdOrCtrl+Alt+Space";
+const DEFAULT_HOTKEY: &str = "CmdOrCtrl+Alt+K";
 
 /// A search request sent to the dedicated worker thread (see `SearchWorker`).
 struct SearchJob {

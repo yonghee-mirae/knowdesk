@@ -4,6 +4,7 @@
 
 import type { SearchMode } from '../types';
 import type { Theme } from '../core/theme';
+import { MOD_KEY } from '../core/platform';
 
 export class KdSearchBar extends HTMLElement {
   private inputEl_: HTMLInputElement;
@@ -92,8 +93,8 @@ export class KdSearchBar extends HTMLElement {
         </svg>
         <input id="query" type="text" placeholder="검색어를 입력하세요." autocomplete="off" spellcheck="false" />
         <div class="mode-toggle" role="tablist" aria-label="검색 모드">
-          <button id="mode-content" class="active" role="tab" aria-selected="true" title="Ctrl+1 또는 Ctrl+Tab">내용</button>
-          <button id="mode-filename" role="tab" aria-selected="false" title="Ctrl+2 또는 Ctrl+Tab">파일명</button>
+          <button id="mode-content" class="active" role="tab" aria-selected="true" title="${MOD_KEY}+1">내용</button>
+          <button id="mode-filename" role="tab" aria-selected="false" title="${MOD_KEY}+2">파일명</button>
         </div>
         <button class="icon-btn" id="theme-toggle" title="테마 전환" aria-label="테마 전환">
           <svg id="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg>

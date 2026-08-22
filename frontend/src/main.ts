@@ -5,6 +5,7 @@ import './components/kd-preview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import * as backend from './platform/backend';
 import { initTheme, effectiveTheme, toggleTheme } from './core/theme';
+import { MOD_KEY } from './core/platform';
 import type { KdSearchBar } from './components/kd-search-bar';
 import type { KdResultList } from './components/kd-result-list';
 import type { KdSyntaxHelp } from './components/kd-syntax-help';
@@ -12,6 +13,13 @@ import type { KdPreview } from './components/kd-preview';
 import type { SearchHit, SearchMode } from './types';
 
 initTheme();
+
+// The footer hint bar's "폴더 열기"/"경로 복사" shortcuts are hardcoded as
+// "Ctrl" in index.html - swap to "⌘" on macOS to match the actual modifier
+// used there (`docs/12_UI_Spec.md` C1 targets Windows/Ctrl as the default).
+document.querySelectorAll('.kd-footer kbd').forEach((el) => {
+  if (el.textContent === 'Ctrl') el.textContent = MOD_KEY;
+});
 
 const RESULT_LIMIT = 20;
 const DEBOUNCE_MS = 150;
@@ -151,11 +159,6 @@ resultList.addEventListener('kd-row-click', (e) => selectIndex((e as CustomEvent
 window.addEventListener('keydown', (e) => {
   const withMod = e.ctrlKey || e.metaKey;
 
-  if (withMod && e.key === 'Tab') {
-    e.preventDefault();
-    setMode(state.mode === 'content' ? 'filename' : 'content');
-    return;
-  }
   if (withMod && e.key === '1') {
     e.preventDefault();
     setMode('content');

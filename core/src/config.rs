@@ -1,9 +1,9 @@
-//! 설정 시스템. TOML 파일을 읽되, 없으면 기본값을 사용한다.
+//! Configuration system. Reads a TOML file, falling back to defaults if absent.
 
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-/// 기본 제외 규칙 (PRD 3장 "기본 제외 규칙" 참조)
+/// Default exclusion rules (see PRD Chapter 3 "Default Exclusion Rules")
 pub const DEFAULT_MAX_FILE_SIZE_MB: u64 = 50;
 pub const DEFAULT_EXCLUDED_EXTENSIONS: &[&str] = &["zip", "7z", "rar"];
 pub const DEFAULT_TEMP_PATTERNS: &[&str] = &["~$", ".tmp", ".temp", ".cache"];
@@ -25,7 +25,7 @@ impl Default for Config {
 }
 
 impl Config {
-    /// `path`에 설정 파일이 있으면 읽어 병합하고, 없으면 기본값을 반환한다.
+    /// If a config file exists at `path`, reads and merges it; otherwise returns the default.
     pub fn load(path: Option<&Path>) -> anyhow::Result<Self> {
         match path {
             Some(p) if p.exists() => {

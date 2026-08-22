@@ -67,9 +67,9 @@ cargo run -p knowdesk-cli -- --db ./samples.db search "짓"    # 어간 — 색�
 cargo run -p knowdesk-cli -- --db ./samples.db search "짓다"  # 사전형 — 검색어 형태소 분석(확장) 확인
 ```
 
-Kiwi가 실제로 동작 중이면 둘 다 `공사보고서.txt`를 찾는다 — "짓"은 `morph_kiwi`에 이미 그대로 있는 토큰이라 `[정확 일치]`, "짓다"는 검색어 확장을 거쳐야 찾아지므로 `[형태소 분석]`이 붙는다. `KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`가 없어 bigram만 쓴다면 둘 다 `결과 없음`이다.
+Kiwi가 실제로 동작 중이면 둘 다 `공사보고서.txt`를 찾는다 — "짓"은 `morph_kiwi`에 이미 그대로 있는 토큰이라 `[exact match]`, "짓다"는 검색어 확장을 거쳐야 찾아지므로 `[morphological match]`가 붙는다. `KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`가 없어 bigram만 쓴다면 둘 다 `No results`다.
 
-검색 결과에는 각 히트가 어떻게 걸렸는지 태그가 붙는다: 리터럴(body/bigram) 그대로 걸렸으면 `[정확 일치]`, Kiwi 검색어 확장으로만 걸렸으면 `[형태소 분석]`. 예를 들어 `search "채권 발행"`은 `[정확 일치]`가 나오는지 확인해보면 된다 — 평범한 검색어는 확장 기능이 있어도 동작이 그대로여야 한다.
+검색 결과에는 각 히트가 어떻게 걸렸는지 태그가 붙는다: 리터럴(body/bigram) 그대로 걸렸으면 `[exact match]`, Kiwi 검색어 확장으로만 걸렸으면 `[morphological match]`. 예를 들어 `search "채권 발행"`은 `[exact match]`가 나오는지 확인해보면 된다 — 평범한 검색어는 확장 기능이 있어도 동작이 그대로여야 한다.
 
 ### CLI 서브커맨드
 

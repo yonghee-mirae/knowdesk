@@ -1,4 +1,4 @@
-//! XLSX 추출 (`calamine`). 모든 시트를 순회하며 셀 값을 행 단위 텍스트로 이어붙인다.
+//! XLSX extraction (`calamine`). Iterates over all sheets, concatenating cell values into row-based text.
 
 use super::{ContentExtractor, DocumentInfo, ExtractError, ExtractionResult};
 use calamine::{open_workbook, Reader, Xlsx};

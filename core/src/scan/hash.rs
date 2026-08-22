@@ -1,4 +1,4 @@
-//! `SHA256Service` — `DocumentID = SHA256(Content)` (`docs/01_KnowDesk_PRD.md` 7장).
+//! `SHA256Service` — `DocumentID = SHA256(Content)` (see `docs/01_KnowDesk_PRD.md` Chapter 7).
 
 use sha2::{Digest, Sha256};
 use std::fs::File;

@@ -1,4 +1,4 @@
-//! `SearchService` — 검색 (`docs/08_API_Contracts.md`).
+//! `SearchService` — search (`docs/08_API_Contracts.md`).
 
 pub mod parser;
 pub mod service;
@@ -16,12 +16,14 @@ pub struct SearchRequest {
     pub limit: i64,
 }
 
-/// 이 히트가 어떻게 걸렸는지. filename 모드는 형태소 분석을 안 쓰므로 항상 `Exact`다.
+/// How this hit was matched. Filename mode never uses morphological
+/// analysis, so it's always `Exact`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchKind {
-    /// 원문 그대로(body/bigram 등)로 걸림.
+    /// Matched on the literal text (body/bigram, etc.).
     Exact,
-    /// 검색어 확장(Kiwi 형태소 분석)으로만 걸림 — 원문 리터럴로는 안 걸린다.
+    /// Matched only via query expansion (Kiwi morphological analysis) — not
+    /// matched by the literal text.
     Morphological,
 }
 
@@ -29,7 +31,8 @@ pub enum MatchKind {
 pub struct SearchHit {
     pub path: String,
     pub filename: String,
-    /// 검색 시 DB 원문에서 즉시 생성한다 (`docs/01_KnowDesk_PRD.md` F-03). 별도 캐시 없음.
+    /// Generated on the fly from the DB's stored text at search time
+    /// (`docs/01_KnowDesk_PRD.md` F-03). No separate cache.
     pub snippet: Option<String>,
     pub rank: f64,
     pub match_kind: MatchKind,

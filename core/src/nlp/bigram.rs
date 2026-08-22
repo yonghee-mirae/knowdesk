@@ -1,6 +1,7 @@
-//! `BigramTokenizer` (MVP 초기 구현). 공백으로 구분한 어절마다 2글자 슬라이딩
-//! 윈도우를 생성한다. 형태소 분석 없이도 `발행절차` 안의 `발행`을 부분적으로
-//! 재현할 수 있게 하는 폴백이며, Kiwi 연동 후 교체된다.
+//! `BigramTokenizer` (initial MVP implementation). Generates a 2-character sliding
+//! window for each whitespace-separated word segment. It's a fallback that lets
+//! `발행` inside `발행절차` be partially recovered without morphological analysis,
+//! and is replaced once Kiwi is integrated.
 
 use super::{Token, Tokenizer};
 

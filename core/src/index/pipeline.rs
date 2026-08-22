@@ -1,4 +1,4 @@
-//! 파일 하나(또는 폴더 전체)를 계층(FULL/META/SKIP)에 맞춰 색인한다.
+//! Indexes a single file (or an entire folder) according to its tier (FULL/META/SKIP).
 
 use rusqlite::Connection;
 use std::path::Path;
@@ -35,15 +35,15 @@ pub struct IndexPipeline<'a> {
     pub conn: &'a Connection,
     pub config: &'a Config,
     pub extractors: &'a [Box<dyn ContentExtractor>],
-    /// 기본 토크나이저 — 항상 실행되어 `content_fts.morph`를 채운다.
+    /// Primary tokenizer — always runs and fills `content_fts.morph`.
     pub bigram: &'a dyn Tokenizer,
-    /// 보조 토크나이저 — 가능할 때만 실행되어 `content_fts.morph_kiwi`를 채운다.
-    /// `None`이면 `morph_kiwi`는 빈 문자열로 남는다.
+    /// Secondary tokenizer — runs only when available and fills `content_fts.morph_kiwi`.
+    /// If `None`, `morph_kiwi` is left as an empty string.
     pub kiwi: Option<&'a dyn Tokenizer>,
 }
 
 impl<'a> IndexPipeline<'a> {
-    /// `root` 아래 파일 전체를 스캔해 색인하고, 계층별 건수를 반환한다.
+    /// Scans and indexes all files under `root`, and returns the counts per tier.
     pub fn index_directory(&self, root: &Path) -> Result<IndexOutcome, IndexError> {
         let mut outcome = IndexOutcome::default();
         for path in walker::scan(root) {
@@ -53,10 +53,10 @@ impl<'a> IndexPipeline<'a> {
         Ok(outcome)
     }
 
-    /// 파일 하나를 색인하고 결정된 계층을 반환한다.
+    /// Indexes a single file and returns the tier it was assigned to.
     pub fn index_file(&self, path: &Path) -> Result<IndexTier, IndexError> {
-        // 상대/절대 경로 표현 차이로 같은 파일이 다른 문서로 색인되는 걸 막는다
-        // (`canonical_path` 참조).
+        // Prevents the same file from being indexed as different documents due to
+        // relative/absolute path representation differences (see `canonical_path`).
         let path = &canonical_path(path);
         let metadata = std::fs::metadata(path)?;
         let file_size = metadata.len();
@@ -72,7 +72,7 @@ impl<'a> IndexPipeline<'a> {
             .to_lowercase();
 
         let Some(extractor) = self.extractors.iter().find(|e| e.supports(&extension)) else {
-            return Ok(IndexTier::Skip); // 미지원 포맷
+            return Ok(IndexTier::Skip); // unsupported format
         };
 
         let document_id = hash::hash_file(path)?;
@@ -83,7 +83,7 @@ impl<'a> IndexPipeline<'a> {
         let modified_at = metadata.modified().ok().map(format_system_time);
 
         let tier = match DocumentRepository::get_tier(self.conn, &document_id)? {
-            // 동일 내용의 문서가 이미 색인되어 있으면 재추출하지 않는다.
+            // If a document with identical content is already indexed, don't re-extract it.
             Some(existing_tier) => existing_tier,
             None => self.extract_and_index(
                 &document_id,
@@ -152,7 +152,7 @@ impl<'a> IndexPipeline<'a> {
                 Ok(IndexTier::Full)
             }
             Err(e) => {
-                tracing::warn!(path = %path.display(), error = %e, "추출 실패, META로 강등");
+                tracing::warn!(path = %path.display(), error = %e, "extraction failed, demoting to META");
                 DocumentRepository::upsert_document(
                     self.conn,
                     &DocumentRecord {

@@ -1,4 +1,4 @@
-//! TXT 추출 + 인코딩 감지 (CP949/EUC-KR/UTF-8 대응, `encoding_rs` + `chardetng`).
+//! TXT extraction + encoding detection (supports CP949/EUC-KR/UTF-8, via `encoding_rs` + `chardetng`).
 
 use super::{ContentExtractor, DocumentInfo, ExtractError, ExtractionResult};
 use chardetng::EncodingDetector;

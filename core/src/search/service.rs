@@ -11,8 +11,10 @@ use crate::nlp::Tokenizer;
 
 pub struct SqliteSearchService<'a> {
     pub conn: &'a Connection,
-    /// 보조 토크나이저 — 있으면 content 모드 검색어를 형태소 분석해서 확장한다.
-    /// filename 모드는 애초에 형태소 분석 없이 색인되므로 이 필드를 쓰지 않는다.
+    /// Secondary tokenizer — if present, expands content-mode search terms
+    /// via morphological analysis. Filename mode is indexed without
+    /// morphological analysis in the first place, so it never uses this
+    /// field.
     pub kiwi: Option<&'a dyn Tokenizer>,
 }
 
@@ -51,15 +53,17 @@ impl<'a> SqliteSearchService<'a> {
 
         let rows =
             SearchRepository::search_content(self.conn, &query_expr, &parsed.filters, limit)?;
-        // 원본 검색어를 먼저 찾아보고, 못 찾으면 Kiwi가 실제 매칭에 쓴 어간도
-        // 시도한다 — 예: "수행함"으로 검색했지만 원문엔 "수행한다"만 있는 경우,
-        // 어간 "수행"으로는 원문에서 찾아 강조할 수 있다.
+        // Try the original search term first; if that's not found, also try
+        // the stem Kiwi actually used for matching — e.g. if the query was
+        // "수행함" but the source text only has "수행한다", the stem "수행"
+        // can still be found and highlighted in the source text.
         let mut needles = literal_needles(parsed);
         needles.extend(analyzed_forms);
 
         let mut hits = Vec::with_capacity(rows.len());
         for mut row in rows {
-            // 확장 안 했으면 애초에 "정확 일치"만 존재한다 — 굳이 재확인하지 않는다.
+            // If we didn't expand, only "exact match" exists in the first
+            // place — no need to re-verify.
             let match_kind = if !expanded {
                 MatchKind::Exact
             } else {
@@ -78,15 +82,20 @@ impl<'a> SqliteSearchService<'a> {
                 }
             };
 
-            // body(0번 컬럼) 스니펫에 강조 표시가 없다는 건 morph/morph_kiwi로만
-            // 걸렸다는 뜻이다(예: "레이아웃과"에서 "레이아웃" — 조사가 붙어서
-            // body 컬럼엔 그 토큰이 없다). 저장된 원문에서 검색어를 직접 찾아
-            // 강조해 보강한다:
-            //   1. 리터럴로 찾아본다 (검색어 그대로, 또는 Kiwi 분석 어간).
-            //   2. 그래도 못 찾으면(불규칙 활용형처럼 표면형 자체가 다른 경우,
-            //      예: "지었다"엔 "짓"이라는 글자가 없음) Kiwi가 원문에서 그
-            //      형태소가 속한 어절의 실제 위치를 알려주면 그 구간을 강조한다.
-            // 둘 다 안 되면 강조 없는 원문 그대로 둔다 — 그게 토큰 나열보다 낫다.
+            // No highlight in the body-column (column 0) snippet means it
+            // matched only via morph/morph_kiwi (e.g. "레이아웃" within
+            // "레이아웃과" — with a particle attached, that token isn't in
+            // the body column). We reinforce this by looking up the search
+            // term directly in the stored source text and highlighting it:
+            //   1. Try a literal lookup (the search term as-is, or the
+            //      Kiwi-analyzed stem).
+            //   2. If that still fails (as with irregular conjugations where
+            //      the surface form itself differs — e.g. "지었다" doesn't
+            //      contain the letters "짓"), and Kiwi can tell us the actual
+            //      position of the word segment that morpheme belongs to in
+            //      the source text, highlight that span.
+            // If neither works, leave the source text unhighlighted — better
+            // than a bare token list.
             let has_highlight = row.snippet.as_deref().is_some_and(|s| s.contains(">>"));
             if !has_highlight && !needles.is_empty() {
                 if let Some(document_id) = &row.document_id {
@@ -101,10 +110,12 @@ impl<'a> SqliteSearchService<'a> {
                 }
             }
 
-            // FTS5의 snippet()은 자체 토크나이저 기준으로 강조 범위를 정해서,
-            // "%"처럼 토큰에 안 들어가는 문자가 검색어의 일부인데도 강조 밖에
-            // 남을 수 있다(예: "3.2%" 검색 시 >>3.2<<%). 강조 바로 뒤가 검색어의
-            // 나머지와 그대로 이어지면 강조 범위를 넓힌다.
+            // FTS5's snippet() decides the highlight range based on its own
+            // tokenizer, so a character that isn't part of a token — like
+            // "%" — can be left outside the highlight even though it's part
+            // of the search term (e.g. searching "3.2%" gives >>3.2<<%). If
+            // what immediately follows the highlight continues into the rest
+            // of the search term, widen the highlight to cover it.
             if !needles.is_empty() {
                 row.snippet = row.snippet.map(|s| widen_highlights(&s, &needles));
             }
@@ -126,11 +137,14 @@ fn to_hit(row: SearchRow, match_kind: MatchKind) -> SearchHit {
     }
 }
 
-/// 검색어의 평범한 단어들을 Kiwi로 분석해 `(원문 OR morph_kiwi:(분석 형태소...))`로
-/// 확장한다. 문구/연산자/접두 검색은 그대로 둔다. 분석 결과가 원문과 다르지 않으면
-/// (흔한 명사 검색 등) 원문 그대로 둔다 — bigram은 검색어 분석에 쓰지 않는다
-/// (`11_Implementation_Plan.md` 참조). 확장된 질의문과, 실제로 매칭에 쓰인 분석
-/// 형태소 목록(스니펫 강조 보강용, `highlight_literal_match` 참조)을 같이 반환한다.
+/// Analyzes plain words in the search term with Kiwi and expands them into
+/// `(literal OR morph_kiwi:(analyzed morphemes...))`. Phrases/operators/prefix
+/// search are left as-is. If the analysis result doesn't differ from the
+/// literal (e.g. searching a common noun), the literal is kept as-is — bigram
+/// is not used for query analysis (see `11_Implementation_Plan.md`). Returns
+/// both the expanded query expression and the list of analyzed morphemes
+/// actually used in matching (for reinforcing snippet highlights, see
+/// `highlight_literal_match`).
 fn expand_with_kiwi(parsed: &ParsedQuery, kiwi: &dyn Tokenizer) -> (String, Vec<String>) {
     let mut analyzed_forms = Vec::new();
     let query_expr = parsed
@@ -161,9 +175,10 @@ fn expand_with_kiwi(parsed: &ParsedQuery, kiwi: &dyn Tokenizer) -> (String, Vec<
     (query_expr, analyzed_forms)
 }
 
-/// 원문에서 그대로 찾아볼 검색어 목록을 만든다. AND/OR/NOT은 검색어가 아니라
-/// 연산자라 뺀다. 문구는 감싼 인용부호를, 접두 검색은 끝의 `*`를 벗겨서
-/// 순수 텍스트만 남긴다.
+/// Builds the list of search terms to look up literally in the source text.
+/// AND/OR/NOT are excluded since they're operators, not search terms. For
+/// phrases the surrounding quotes are stripped, and for prefix search the
+/// trailing `*` is stripped, leaving just the plain text.
 fn literal_needles(parsed: &ParsedQuery) -> Vec<String> {
     parsed
         .terms
@@ -174,9 +189,10 @@ fn literal_needles(parsed: &ParsedQuery) -> Vec<String> {
         .collect()
 }
 
-/// 저장된 원문(`body`)에서 `needles` 중 하나를 대소문자 무관으로 찾아, 글자 위치
-/// (시작, 길이)를 돌려준다. 어느 것도 리터럴로 없으면 `None` — 그러면 호출부가
-/// `Tokenizer::locate`로 한 번 더 시도한다.
+/// Case-insensitively finds one of `needles` in the stored source text
+/// (`body`) and returns its character position (start, length). Returns
+/// `None` if none of them exist literally — the caller then tries again with
+/// `Tokenizer::locate`.
 fn find_literal_span(body: &str, needles: &[String]) -> Option<(usize, usize)> {
     let body_chars: Vec<char> = body.chars().collect();
     needles.iter().find_map(|needle| {
@@ -185,8 +201,9 @@ fn find_literal_span(body: &str, needles: &[String]) -> Option<(usize, usize)> {
     })
 }
 
-/// `body`의 글자 단위 구간 `[start, start+len)`을 `>>...<<`로 감싸고, 앞뒤로
-/// 문맥을 붙여 스니펫을 만든다. 잘려나간 쪽에는 `...`을 붙인다.
+/// Wraps the character-based span `[start, start+len)` of `body` in `>>...<<`
+/// and attaches surrounding context to build a snippet. Adds `...` on the
+/// side that got truncated.
 fn build_snippet(body: &str, start: usize, len: usize) -> String {
     const CONTEXT_CHARS: usize = 40;
 
@@ -209,11 +226,13 @@ fn build_snippet(body: &str, start: usize, len: usize) -> String {
     snippet
 }
 
-/// 강조(`>>...<<`) 구간 바로 다음 글자들이, 그 강조된 텍스트를 접두로 하는
-/// `needle`의 나머지 부분과 그대로 이어지면 강조를 그만큼 넓힌다. FTS5의
-/// snippet()은 자체 토크나이저 기준으로 강조 범위를 정하다 보니, "3.2%"처럼
-/// 토큰에 안 들어가는 문자(%)가 검색어의 일부인데도 강조 밖에 남는 경우가
-/// 있다(`>>3.2<<%`) — 이런 경우를 사람이 보기에 자연스럽게 고친다.
+/// If the characters right after a highlight (`>>...<<`) span continue into
+/// the rest of a `needle` for which the highlighted text is a prefix, widen
+/// the highlight to cover them. Because FTS5's snippet() decides the
+/// highlight range based on its own tokenizer, a character that isn't part
+/// of a token (%) can be left outside the highlight even though it's part of
+/// the search term, as with "3.2%" (`>>3.2<<%`) — this fixes such cases so
+/// they look natural to a human reader.
 fn widen_highlights(snippet: &str, needles: &[String]) -> String {
     let needle_chars: Vec<Vec<char>> = needles.iter().map(|n| n.chars().collect()).collect();
     let chars: Vec<char> = snippet.chars().collect();
@@ -273,9 +292,11 @@ fn widen_highlights(snippet: &str, needles: &[String]) -> String {
     out
 }
 
-/// `needle`이 `haystack` 안에 있는 첫 글자 위치(문자 단위 인덱스, 바이트 아님)를
-/// 대소문자 무관으로 찾는다. 한글엔 대소문자가 없어 순수 동등 비교와 같고,
-/// 영문에만 실질적으로 영향을 준다(예: "KOSPI" 검색어로 "kospi" 원문을 찾음).
+/// Case-insensitively finds the position of the first character (character
+/// index, not byte) of `needle` within `haystack`. Since Hangul has no case,
+/// this is equivalent to plain equality there, and it only has real effect on
+/// Latin text (e.g. finding "kospi" in the source text with the search term
+/// "KOSPI").
 fn find_ignore_ascii_case(haystack: &[char], needle: &[char]) -> Option<usize> {
     if needle.is_empty() || needle.len() > haystack.len() {
         return None;

@@ -1,13 +1,14 @@
-//! SQLite 스키마. `docs/04_Data_Model.md`를 단일 출처로 한다.
+//! SQLite schema. `docs/04_Data_Model.md` is the single source of truth.
 //!
-//! `filename_fts`/`content_fts`에는 문서 모델 문서에 없는 `UNINDEXED` 연결 컬럼
-//! (`path`, `document_id`)을 추가했다 — FTS5 결과를 `documents`/`paths`로 되짚어
-//! 조인하기 위한 구현상 필수 요소이며, 검색 가능한 컬럼(`filename`/`body`/`morph`)
-//! 자체는 문서 정의 그대로다.
+//! `filename_fts`/`content_fts` add `UNINDEXED` linking columns (`path`, `document_id`)
+//! that aren't in the data model doc — these are an implementation necessity for joining
+//! FTS5 results back to `documents`/`paths`; the searchable columns themselves
+//! (`filename`/`body`/`morph`) match the document definition as-is.
 //!
-//! `content_fts.morph_kiwi`는 v1.1 스키마에 없던 컬럼이다 (Phase B2 재설계).
-//! `morph`(bigram)은 항상 채우는 기본 토크나이저, `morph_kiwi`는 Kiwi가 가능할 때만
-//! 채우는 보조 토크나이저로 역할을 나눴다 — 자세한 내용은 `04_Data_Model.md` 참조.
+//! `content_fts.morph_kiwi` is a column that wasn't in the v1.1 schema (added in the Phase B2
+//! redesign). The roles are split: `morph` (bigram) is the default tokenizer, always populated;
+//! `morph_kiwi` is the secondary tokenizer, populated only when Kiwi is available —
+//! see `04_Data_Model.md` for details.
 
 pub const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS documents
@@ -15,10 +16,10 @@ CREATE TABLE IF NOT EXISTS documents
     document_id TEXT PRIMARY KEY,   -- SHA256(content)
 
     file_size INTEGER,
-    text_bytes INTEGER,             -- 추출된 본문 크기 (DB 용량 추정/통계용)
+    text_bytes INTEGER,             -- extracted body size (for DB size estimation/stats)
 
     index_tier TEXT NOT NULL,       -- FULL | META | SKIP
-    index_status TEXT NOT NULL,     -- 상태 머신, `docs/04_Data_Model.md` 참조
+    index_status TEXT NOT NULL,     -- state machine, see `docs/04_Data_Model.md`
 
     demotion_reason TEXT,           -- DRM | CORRUPT | ENCRYPTED | PARSE_FAIL
 
@@ -26,7 +27,7 @@ CREATE TABLE IF NOT EXISTS documents
     retry_count INTEGER NOT NULL DEFAULT 0,
     last_attempt_at TEXT,
 
-    content_stored INTEGER NOT NULL DEFAULT 1,  -- 1=원문 저장, 0=압축/미저장
+    content_stored INTEGER NOT NULL DEFAULT 1,  -- 1=original text stored, 0=compressed/not stored
 
     indexed_at TEXT
 );

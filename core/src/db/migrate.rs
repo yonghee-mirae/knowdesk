@@ -1,11 +1,12 @@
-//! 마이그레이션 러너. `KnowDesk_추가검토사항.md` C-3(롤백 필요 여부)가 미결이므로,
-//! 확정 전까지는 `11_Implementation_Plan.md`의 결정대로 up 마이그레이션만 구현한다.
+//! Migration runner. `KnowDesk_추가검토사항.md` C-3 (whether rollback is needed) is still
+//! undecided, so until that's settled, only up-migrations are implemented, per the decision
+//! in `11_Implementation_Plan.md`.
 
 use rusqlite::Connection;
 
 use super::schema::SCHEMA_V1;
 
-/// (버전, 적용할 SQL) 목록. 새 마이그레이션은 뒤에 추가한다.
+/// List of (version, SQL to apply). New migrations are appended at the end.
 const MIGRATIONS: &[(i64, &str)] = &[(1, SCHEMA_V1)];
 
 pub fn run(conn: &Connection) -> rusqlite::Result<()> {
@@ -44,7 +45,7 @@ mod tests {
     fn runs_migrations_idempotently() {
         let conn = Connection::open_in_memory().unwrap();
         run(&conn).unwrap();
-        run(&conn).unwrap(); // 두 번 실행해도 에러 없어야 함
+        run(&conn).unwrap(); // running twice should not error
 
         let version: i64 = conn
             .query_row(

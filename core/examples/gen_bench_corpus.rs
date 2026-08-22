@@ -1,18 +1,19 @@
-//! 벤치마크(`cli bench`, Phase B5)용 대량 코퍼스 생성기.
+//! Bulk corpus generator for benchmarking (`cli bench`, Phase B5).
 //!
-//! 실행:
+//! Usage:
 //! ```text
-//! cargo run -p knowdesk-core --example gen_bench_corpus [출력 경로, 기본값 ./bench_corpus] [건수, 기본값 5000]
+//! cargo run -p knowdesk-core --example gen_bench_corpus [output path, default ./bench_corpus] [count, default 5000]
 //! ```
 //!
-//! `gen_samples`는 포맷별 기능 검증(정상 케이스 + 제외 규칙)이 목적이라 파일 10여 개뿐이다.
-//! 벤치마크는 개수·총 용량 규모가 목적이라 그것과는 별도로 둔다. `.txt`만 생성하는데,
-//! 포맷별 추출 정확성은 이미 `gen_samples`/익스트랙터 테스트가 커버하고 있어서 여기서는
-//! 색인 처리량·검색 P95·DB 크기를 재는 데 필요한 "많은 문서" 자체에만 집중한다.
+//! `gen_samples` aims to verify per-format functionality (normal cases + exclusion rules),
+//! so it only has a dozen or so files. This benchmark exists separately because its goal is
+//! sheer count and total volume. It only generates `.txt` files, since per-format extraction
+//! accuracy is already covered by `gen_samples`/extractor tests — here we focus purely on
+//! producing the "many documents" needed to measure indexing throughput, search P95, and DB size.
 //!
-//! 매 실행마다 내용이 달라지도록 (새 의존성 없이) 직접 만든 xorshift64 PRNG로 문장을
-//! 무작위 조합한다 - 결과를 특정 실행에 맞춰 재현하려는 목적이 아니라, 벤치마크 숫자가
-//! 우연히 특정 내용에 최적화되어 보이는 착시를 피하려는 것이다.
+//! Sentences are randomly combined using a hand-rolled xorshift64 PRNG (no new dependency)
+//! so the content differs on every run — not to make results reproducible for a specific run,
+//! but to avoid the illusion that benchmark numbers happen to be optimized for particular content.
 
 use std::fs;
 use std::path::Path;
@@ -23,30 +24,30 @@ fn main() {
     let count: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(5000);
 
     let out_dir = Path::new(&out_dir);
-    fs::create_dir_all(out_dir).expect("출력 폴더 생성 실패");
+    fs::create_dir_all(out_dir).expect("failed to create output folder");
 
     let mut rng = Rng::seeded();
     for i in 0..count {
         let text = random_document(&mut rng);
-        fs::write(out_dir.join(format!("문서_{i:05}.txt")), text).expect("파일 쓰기 실패");
+        fs::write(out_dir.join(format!("문서_{i:05}.txt")), text).expect("failed to write file");
     }
 
     println!(
-        "벤치마크 코퍼스 생성 완료: {count}건, {}",
+        "Benchmark corpus generation complete: {count} files, {}",
         out_dir.display()
     );
     println!();
-    println!("검증 방법:");
+    println!("How to verify:");
     println!(
         "  cargo run -p knowdesk-cli -- --db ./bench.db bench {}",
         out_dir.display()
     );
 }
 
-/// 문서 안에서 조합할 문장 풀. 실제 `cli bench` 기본 검색어(`cli/src/main.rs`의
-/// `DEFAULT_QUERIES`)가 여기 등장하는 단어(채권/발행/이사회/결의/국채 등)로 검색했을 때
-/// 실제로 매칭되도록 어휘를 맞춰둔다 — 벤치가 "결과 없음"만 반복하며 조기 종료 경로만
-/// 재는 것을 방지한다.
+/// Pool of sentences to combine inside documents. The vocabulary is chosen so that the
+/// `cli bench` default queries (`DEFAULT_QUERIES` in `cli/src/main.rs`) actually match when
+/// searching for the words that appear here (채권/발행/이사회/결의/국채, etc.) — this prevents
+/// the benchmark from only measuring the early-exit "no results" path over and over.
 const SENTENCES: &[&str] = &[
     "본 문서는 채권 발행 절차를 규정한다.",
     "채권 발행 시 이사회 승인이 필요하다.",
@@ -64,8 +65,8 @@ const SENTENCES: &[&str] = &[
     "신규 사업 계획을 이사회에 보고했다.",
 ];
 
-/// 새 의존성을 추가하지 않기 위해 직접 구현한 최소한의 PRNG (xorshift64).
-/// 암호적으로 안전할 필요는 없다 — 매 실행 다른 내용을 만드는 용도뿐이다.
+/// Minimal hand-rolled PRNG (xorshift64), implemented to avoid adding a new dependency.
+/// It doesn't need to be cryptographically secure — it's only used to vary content per run.
 struct Rng(u64);
 
 impl Rng {
@@ -74,7 +75,7 @@ impl Rng {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        Self(nanos | 1) // 0이면 xorshift가 항상 0만 내놓으므로 최소 1비트 보장
+        Self(nanos | 1) // guarantee at least 1 bit is set, since xorshift with 0 always yields 0
     }
 
     fn next_u64(&mut self) -> u64 {
@@ -91,12 +92,12 @@ impl Rng {
     }
 }
 
-/// 짧은/중간/긴 문서를 섞어서 총 용량 분포가 실제 문서함과 비슷해지게 한다.
+/// Mix short/medium/long documents so the total size distribution resembles a real document folder.
 fn random_document(rng: &mut Rng) -> String {
     let sentence_count = match rng.range(3) {
-        0 => 3 + rng.range(5),    // 짧은 문서: 3~7문장
-        1 => 10 + rng.range(20),  // 중간 문서: 10~29문장
-        _ => 50 + rng.range(100), // 긴 문서: 50~149문장
+        0 => 3 + rng.range(5),    // short document: 3-7 sentences
+        1 => 10 + rng.range(20),  // medium document: 10-29 sentences
+        _ => 50 + rng.range(100), // long document: 50-149 sentences
     };
     let mut text = String::new();
     for _ in 0..sentence_count {

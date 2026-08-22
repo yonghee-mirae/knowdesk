@@ -1,11 +1,12 @@
-//! PDF 추출 (`pdfium-render`). 네이티브 PDFium 동적 라이브러리를 로드해 사용한다.
+//! PDF extraction (`pdfium-render`). Loads and uses the native PDFium dynamic library.
 //!
-//! Pdfium은 프로세스당 한 번만 바인딩할 수 있다 — 두 번째로 `Pdfium::new`를 호출하면
-//! panic한다. 그래서 전역 `OnceLock`으로 한 번만 초기화하고 이후 호출은 재사용한다.
+//! Pdfium can only be bound once per process — calling `Pdfium::new` a second time
+//! panics. So we initialize it once via a global `OnceLock` and reuse it on later calls.
 //!
-//! 라이브러리 경로는 `KNOWDESK_PDFIUM_LIB_DIR` 환경 변수로 지정한다 (예: 압축 해제한
-//! `lib/` 디렉터리). 지정하지 않으면 시스템 라이브러리 경로에서 찾는다. 배포판에서는
-//! 인스톨러가 네이티브 라이브러리를 실행 파일과 함께 동봉한다 (`03_Architecture.md`).
+//! The library path is set via the `KNOWDESK_PDFIUM_LIB_DIR` environment variable (e.g.
+//! an extracted `lib/` directory). If unset, it falls back to the system library path.
+//! In distributed builds, the installer bundles the native library alongside the
+//! executable (`03_Architecture.md`).
 
 use super::{ContentExtractor, DocumentInfo, ExtractError, ExtractionResult};
 use pdfium_render::prelude::*;
@@ -16,8 +17,8 @@ static PDFIUM: OnceLock<Result<Pdfium, String>> = OnceLock::new();
 pub struct PdfExtractor;
 
 impl PdfExtractor {
-    /// libpdfium 로드에 성공했는지 확인한다. 네이티브 라이브러리가 없는 환경(CI 등)에서
-    /// 테스트를 건너뛸지 판단하는 용도로 쓴다.
+    /// Checks whether libpdfium loaded successfully. Used to decide whether to skip
+    /// tests in environments without the native library (e.g. CI).
     pub fn is_available() -> bool {
         Self::pdfium().is_ok()
     }
@@ -36,7 +37,7 @@ impl PdfExtractor {
         match result {
             Ok(pdfium) => Ok(pdfium),
             Err(e) => Err(ExtractError::Parse(format!(
-                "PDFium 라이브러리 로드 실패: {e}"
+                "Failed to load PDFium library: {e}"
             ))),
         }
     }
@@ -70,20 +71,21 @@ impl ContentExtractor for PdfExtractor {
 mod tests {
     use super::*;
 
-    /// 이 테스트는 `KNOWDESK_PDFIUM_LIB_DIR`(또는 시스템 경로)에 실제 libpdfium이
-    /// 있어야 통과한다. CI/개발 환경에 네이티브 라이브러리가 없을 수 있으므로,
-    /// 로드 실패 시 테스트를 건너뛴다 (`cargo test`가 환경 문제로 실패하지 않게).
+    /// This test only passes if a real libpdfium is available at `KNOWDESK_PDFIUM_LIB_DIR`
+    /// (or the system path). Since the native library may be missing in CI/dev
+    /// environments, the test is skipped on load failure (so `cargo test` doesn't fail
+    /// due to environment issues).
     #[test]
     fn extracts_text_when_pdfium_available() {
         if !PdfExtractor::is_available() {
-            eprintln!("libpdfium을 찾을 수 없어 건너뜁니다 (KNOWDESK_PDFIUM_LIB_DIR 미설정)");
+            eprintln!("Skipping: libpdfium not found (KNOWDESK_PDFIUM_LIB_DIR not set)");
             return;
         }
 
         let sample =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/korean.pdf");
         if !sample.exists() {
-            eprintln!("샘플 PDF가 없어 건너뜁니다: {}", sample.display());
+            eprintln!("Skipping: sample PDF not found: {}", sample.display());
             return;
         }
 
@@ -94,7 +96,7 @@ mod tests {
             })
             .unwrap();
 
-        assert!(result.body.contains("채권"), "본문: {}", result.body);
+        assert!(result.body.contains("채권"), "body: {}", result.body);
     }
 
     #[test]

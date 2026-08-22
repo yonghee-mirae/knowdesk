@@ -1,5 +1,5 @@
-//! `ContentExtractor` — 본문 추출 추상화 (`docs/08_API_Contracts.md`).
-//! Phase A는 TXT만 구현한다. XLSX/DOCX/PPTX/PDF는 Phase B.
+//! `ContentExtractor` — content extraction abstraction (`docs/08_API_Contracts.md`).
+//! Phase A implements only TXT. XLSX/DOCX/PPTX/PDF are Phase B.
 
 pub mod ooxml;
 pub mod pdf;
@@ -34,7 +34,7 @@ pub trait ContentExtractor {
     fn extract(&self, document: &DocumentInfo) -> Result<ExtractionResult, ExtractError>;
 }
 
-/// 확장자에 맞는 추출기를 찾는다. 없으면 `None` (호출부에서 SKIP 처리).
+/// Finds the extractor matching the extension. Returns `None` if none matches (caller handles it as SKIP).
 pub fn find_extractor<'a>(
     extractors: &'a [Box<dyn ContentExtractor>],
     ext: &str,

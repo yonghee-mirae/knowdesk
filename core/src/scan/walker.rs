@@ -1,9 +1,9 @@
-//! 폴더 스캔 (`DirectoryScanner`).
+//! Directory scanning (`DirectoryScanner`).
 
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-/// `root` 아래 모든 일반 파일 경로를 재귀적으로 나열한다. 심볼릭 링크는 따라가지 않는다.
+/// Recursively lists all regular file paths under `root`. Symbolic links are not followed.
 pub fn scan(root: &Path) -> Vec<PathBuf> {
     WalkDir::new(root)
         .follow_links(false)

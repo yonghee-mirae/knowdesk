@@ -1,5 +1,5 @@
-//! Phase A 완료 기준(`docs/06_Development_Roadmap.md`)의 통합 검증:
-//! 폴더를 색인하고 "채권 발행"을 검색하면 스니펫과 함께 결과가 나와야 한다.
+//! Integration verification for Phase A's completion criteria (`docs/06_Development_Roadmap.md`):
+//! indexing a folder and searching "채권 발행" should return results with a snippet.
 
 use knowdesk_core::config::Config;
 use knowdesk_core::db::Db;
@@ -161,16 +161,17 @@ fn indexes_docx_file_and_finds_snippet() {
 
 #[test]
 fn indexes_pdf_file_and_finds_snippet() {
-    // 이 통합 검증은 실제 libpdfium 로드에 성공해야 의미가 있다 (`KNOWDESK_PDFIUM_LIB_DIR`).
-    // 네이티브 라이브러리가 없는 환경(CI 등)에서도 `cargo test`가 실패하지 않도록 건너뛴다.
+    // This integration test is only meaningful if native libpdfium actually loads
+    // (`KNOWDESK_PDFIUM_LIB_DIR`). Skipped so `cargo test` doesn't fail in environments
+    // without the native library (e.g. CI).
     if !PdfExtractor::is_available() {
-        eprintln!("libpdfium을 찾을 수 없어 건너뜁니다 (KNOWDESK_PDFIUM_LIB_DIR 미설정)");
+        eprintln!("libpdfium not found, skipping (KNOWDESK_PDFIUM_LIB_DIR not set)");
         return;
     }
 
     let dir = tempfile::tempdir().unwrap();
-    // 한글 CID 폰트로 렌더링된 실제 PDF (LibreOffice headless로 생성, `docs/06_Development_Roadmap.md`
-    // B1이 지목한 최대 리스크 구간 검증용).
+    // Real PDF rendered with a Korean CID font (generated via LibreOffice headless, for
+    // verifying the highest-risk area flagged for B1 in `docs/06_Development_Roadmap.md`).
     std::fs::copy(
         concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/korean.pdf"),
         dir.path().join("규정.pdf"),
@@ -214,20 +215,20 @@ fn indexes_pdf_file_and_finds_snippet() {
 
 #[test]
 fn finds_irregular_verb_stem_only_with_kiwi() {
-    // 이 통합 검증은 실제 Kiwi 로드에 성공해야 의미가 있다
-    // (`KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`). 네이티브 라이브러리가
-    // 없는 환경(CI 등)에서도 `cargo test`가 실패하지 않도록 건너뛴다.
+    // This integration test is only meaningful if Kiwi actually loads
+    // (`KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`). Skipped so `cargo test` doesn't
+    // fail in environments without the native library (e.g. CI).
     let Some(kiwi_result) = KiwiTokenizer::from_env() else {
-        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR 미설정, 건너뜁니다");
+        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR not set, skipping");
         return;
     };
-    let kiwi = kiwi_result.expect("Kiwi 초기화 실패");
+    let kiwi = kiwi_result.expect("Kiwi initialization failed");
 
-    // "짓다"는 ㅅ 불규칙 동사라 과거형 "지었다"의 표면형에는 "짓"이라는 글자가
-    // 전혀 나타나지 않는다(지/었/다). bigram은 원문 글자를 그대로 2글자씩 자르기만
-    // 하므로 원문에 없는 글자로는 매칭될 수 없지만, 형태소 분석은 어간을 "짓"으로
-    // 복원하므로 검색이 가능하다 — bigram 대비 Kiwi 재현율 차이를 보여주는 예시다
-    // (TASK-504).
+    // "짓다" is a ㅅ-irregular verb, so its past-tense surface form "지었다" never actually
+    // contains the character "짓" (지/었/다). Since bigram just slices the original text two
+    // characters at a time, it can't match a character absent from the original text, but
+    // morphological analysis recovers the stem as "짓", making it searchable — an example
+    // showing the recall gap between bigram and Kiwi (TASK-504).
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("공사보고서.txt"), "그는 새 건물을 지었다.").unwrap();
 
@@ -257,11 +258,11 @@ fn finds_irregular_verb_stem_only_with_kiwi() {
     assert_eq!(
         result.hits.len(),
         1,
-        "Kiwi는 지었다 → 짓 어간을 복원해 찾아야 한다"
+        "Kiwi should recover the stem 지었다 → 짓 and find it"
     );
     assert_eq!(result.hits[0].filename, "공사보고서.txt");
 
-    // 비교 기준선: 동일한 문서를 bigram으로 색인하면 "짓"은 절대 찾을 수 없다.
+    // Baseline for comparison: indexing the same document with bigram should never find "짓".
     let bigram_db = Db::open_in_memory().unwrap();
     let bigram = BigramTokenizer;
     let bigram_pipeline = IndexPipeline {
@@ -286,20 +287,21 @@ fn finds_irregular_verb_stem_only_with_kiwi() {
         .unwrap();
     assert!(
         bigram_result.hits.is_empty(),
-        "bigram은 원문에 없는 글자를 찾을 수 없어야 한다: {:?}",
+        "bigram must not be able to find a character absent from the original text: {:?}",
         bigram_result.hits
     );
 }
 
 #[test]
 fn expands_query_with_kiwi_to_find_dictionary_form() {
-    // 검색어 쪽 형태소 분석: "짓다"(사전형)로 검색해도 활용형 "지었고"를 찾아야 한다.
-    // 이건 색인이 아니라 검색어 확장(search::service::expand_with_kiwi)이 하는 일이다.
+    // Morphological analysis on the query side: searching with the dictionary form "짓다"
+    // should still find the inflected form "지었고". This is done by query expansion
+    // (search::service::expand_with_kiwi), not by indexing.
     let Some(kiwi_result) = KiwiTokenizer::from_env() else {
-        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR 미설정, 건너뜁니다");
+        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR not set, skipping");
         return;
     };
-    let kiwi = kiwi_result.expect("Kiwi 초기화 실패");
+    let kiwi = kiwi_result.expect("Kiwi initialization failed");
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -322,8 +324,8 @@ fn expands_query_with_kiwi_to_find_dictionary_form() {
     };
     pipeline.index_directory(dir.path()).unwrap();
 
-    // 검색어 분석 없이("짓다" 리터럴 그대로)는 찾지 못한다 — FTS5는 "짓다"를 통짜
-    // 토큰 하나로 보고, 색인에는 그런 토큰이 없다.
+    // Without query analysis (literal "짓다" as-is), it should not be found — FTS5 treats
+    // "짓다" as a single opaque token, and the index has no such token.
     let no_expansion = SqliteSearchService {
         conn: &db.conn,
         kiwi: None,
@@ -337,11 +339,11 @@ fn expands_query_with_kiwi_to_find_dictionary_form() {
         .unwrap();
     assert!(
         literal_result.hits.is_empty(),
-        "검색어 분석 없이는 짓다로 못 찾아야 한다: {:?}",
+        "without query analysis, 짓다 should not be found: {:?}",
         literal_result.hits
     );
 
-    // 검색어를 Kiwi로 분석하면 어간 "짓"이 남아 "지었고"를 찾는다.
+    // Analyzing the query with Kiwi leaves the stem "짓", which finds "지었고".
     let with_expansion = SqliteSearchService {
         conn: &db.conn,
         kiwi: Some(&kiwi),
@@ -354,29 +356,32 @@ fn expands_query_with_kiwi_to_find_dictionary_form() {
         })
         .unwrap();
 
-    assert_eq!(result.hits.len(), 1, "히트: {:?}", result.hits);
+    assert_eq!(result.hits.len(), 1, "hits: {:?}", result.hits);
     assert_eq!(result.hits[0].filename, "공사일지.txt");
-    // 리터럴 "짓다"는 원문에 없으니 형태소 분석으로만 걸린 것이어야 한다.
+    // The literal "짓다" is absent from the original text, so it must have matched only
+    // via morphological analysis.
     assert_eq!(result.hits[0].match_kind, MatchKind::Morphological);
-    // "짓다"도 "짓"도 원문에 리터럴로 없지만(ㅅ 불규칙), Kiwi가 알려주는 형태소
-    // 위치로 실제 활용형 "지었고"의 원문 구간을 정확히 강조해야 한다(뒤에 붙는
-    // 쉼표는 "고"와 같은 어절로 묶여 강조 범위에 함께 포함된다).
+    // Neither "짓다" nor "짓" is literally present in the original text (ㅅ-irregular), but
+    // using the morpheme position Kiwi reports, the exact original-text span of the actual
+    // inflected form "지었고" must be highlighted (the trailing comma is grouped into the
+    // same word as "고" and included in the highlight range).
     let snippet = result.hits[0].snippet.as_deref().unwrap_or_default();
     assert!(
         snippet.contains(">>지었고,<<"),
-        "활용형 원문 구간이 강조되지 않음: {snippet:?}"
+        "the original-text span of the inflected form was not highlighted: {snippet:?}"
     );
 }
 
 #[test]
 fn kiwi_query_expansion_keeps_exact_tag_for_plain_noun_search() {
-    // "채권 발행"처럼 평범한 명사 검색어는 검색어 확장을 켜도 리터럴 그대로 걸려야
-    // 하고, 그건 "정확 일치"로 표시돼야 한다 — 확장 기능이 기존 검색을 깨면 안 된다.
+    // For a plain noun query like "채권 발행", even with query expansion enabled it should
+    // still match literally, and be tagged "exact match" — the expansion feature must not
+    // break existing search behavior.
     let Some(kiwi_result) = KiwiTokenizer::from_env() else {
-        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR 미설정, 건너뜁니다");
+        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR not set, skipping");
         return;
     };
-    let kiwi = kiwi_result.expect("Kiwi 초기화 실패");
+    let kiwi = kiwi_result.expect("Kiwi initialization failed");
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -416,15 +421,16 @@ fn kiwi_query_expansion_keeps_exact_tag_for_plain_noun_search() {
 
 #[test]
 fn kiwi_query_expansion_finds_compound_noun_attached_to_particle() {
-    // "위원회에서"처럼 명사에 조사가 공백 없이 붙은 형태는, 색인 시점에 문맥이
-    // 있어 Kiwi가 "위원회"를 정확히 하나의 명사로 분리해낸다(`kiwi-cli`로 직접
-    // 확인). 검색어 "위원회"도 표준어라 분석 결과가 리터럴과 같으므로 확장이
-    // 일어나지 않고, 그대로 "정확 일치"로 걸린다.
+    // A form like "위원회에서" where a particle is attached to a noun with no space: since
+    // there's context at index time, Kiwi correctly separates out "위원회" as a single noun
+    // (confirmed directly via `kiwi-cli`). Since the query "위원회" is also standard
+    // vocabulary, its analysis result equals the literal, so no expansion happens, and it
+    // matches directly as an "exact match".
     let Some(kiwi_result) = KiwiTokenizer::from_env() else {
-        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR 미설정, 건너뜁니다");
+        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR not set, skipping");
         return;
     };
-    let kiwi = kiwi_result.expect("Kiwi 초기화 실패");
+    let kiwi = kiwi_result.expect("Kiwi initialization failed");
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -458,25 +464,27 @@ fn kiwi_query_expansion_finds_compound_noun_attached_to_particle() {
         })
         .unwrap();
 
-    assert_eq!(result.hits.len(), 1, "히트: {:?}", result.hits);
+    assert_eq!(result.hits.len(), 1, "hits: {:?}", result.hits);
     assert_eq!(result.hits[0].filename, "결의록.txt");
     assert_eq!(result.hits[0].match_kind, MatchKind::Exact);
 }
 
 #[test]
 fn kiwi_query_expansion_still_finds_misanalyzed_compound_via_or_safety_net() {
-    // 반대 사례: "이사회"는 문맥이 있어도 Kiwi가 "이(관형사)+사회"로 잘못 쪼갤 수
-    // 있다("이 사회"라는 훨씬 흔한 구문과 형태가 같아서 — `kiwi-cli`로 직접 확인).
-    // 색인 시점의 "이사회에서"도 검색어 "이사회"도 똑같이 잘못 쪼개지지만, 원래
-    // 검색어를 교체가 아니라 OR로 남겨두는 안전망 설계 덕에 (양쪽이 공유하는
-    // "사회" 조각을 통해) 문서를 찾긴 한다 — 다만 리터럴 "이사회"는 어디에도
-    // 없으므로 "형태소 분석" 태그가 붙는 게 맞다(교체 방식이었다면 이 사례에서
-    // 아예 못 찾았을 것이다 — "이 사회"로 쪼개진 뒤 원래 뜻과 무관해지므로).
+    // Opposite case: even with context, Kiwi can incorrectly split "이사회" into
+    // "이(determiner)+사회" (because it shares its form with the much more common phrase
+    // "이 사회" — confirmed directly via `kiwi-cli`). Both the indexed "이사회에서" and the
+    // query "이사회" get split the same way incorrectly, but thanks to the safety-net design
+    // that keeps the original query as an OR rather than replacing it, the document is still
+    // found (via the shared "사회" fragment) — however, since the literal "이사회" appears
+    // nowhere, it's correctly tagged "morphological match" (with a replacement approach,
+    // this case would have found nothing at all — once split into "이 사회" it becomes
+    // unrelated to the original meaning).
     let Some(kiwi_result) = KiwiTokenizer::from_env() else {
-        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR 미설정, 건너뜁니다");
+        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR not set, skipping");
         return;
     };
-    let kiwi = kiwi_result.expect("Kiwi 초기화 실패");
+    let kiwi = kiwi_result.expect("Kiwi initialization failed");
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -510,26 +518,27 @@ fn kiwi_query_expansion_still_finds_misanalyzed_compound_via_or_safety_net() {
         })
         .unwrap();
 
-    assert_eq!(result.hits.len(), 1, "히트: {:?}", result.hits);
+    assert_eq!(result.hits.len(), 1, "hits: {:?}", result.hits);
     assert_eq!(result.hits[0].filename, "결의록.txt");
     assert_eq!(result.hits[0].match_kind, MatchKind::Morphological);
 }
 
 #[test]
 fn highlights_literal_match_in_original_text_when_body_column_has_none() {
-    // "레이아웃과"처럼 명사에 조사가 공백 없이 붙어 있으면 body 컬럼엔 그 토큰이
-    // 없다(FTS5 기본 토크나이저는 "레이아웃과"를 통짜 토큰으로 본다). Kiwi가 색인
-    // 시점에 "레이아웃"을 조사와 분리해 morph_kiwi에만 넣어두므로, "레이아웃"으로
-    // 검색하면 body엔 강조할 게 없어 스니펫에 아무 표시도 안 뜨는 문제가 실제로
-    // 있었다. body에 강조가 없으면 저장된 원문에서 검색어를 직접 찾아 강조해야
-    // 한다 — FTS5 컬럼 자동 선택으로는 토큰만 나열된 morph_kiwi 텍스트가 나와서
-    // (예: "발행 시 이사회 승인 필요 다 달 레이아웃 표 검증") 오히려 더 혼란스럽다
-    // (실제로 그렇게 나오는 것까지 확인하고 되돌림).
+    // When a particle is attached to a noun with no space, like "레이아웃과", the body column
+    // doesn't contain that token (FTS5's default tokenizer treats "레이아웃과" as one opaque
+    // token). Since Kiwi separates "레이아웃" from the particle at index time and puts it only
+    // in morph_kiwi, searching for "레이아웃" used to have nothing to highlight in body, and a
+    // real bug caused the snippet to show no highlight at all. When body has no highlight, the
+    // query must be searched for directly in the stored original text and highlighted there —
+    // FTS5's automatic column selection would instead surface the morph_kiwi text, which is
+    // just a list of tokens (e.g. "발행 시 이사회 승인 필요 다 달 레이아웃 표 검증") and is
+    // actually more confusing (confirmed this happens and reverted it).
     let Some(kiwi_result) = KiwiTokenizer::from_env() else {
-        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR 미설정, 건너뜁니다");
+        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR not set, skipping");
         return;
     };
-    let kiwi = kiwi_result.expect("Kiwi 초기화 실패");
+    let kiwi = kiwi_result.expect("Kiwi initialization failed");
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -563,31 +572,32 @@ fn highlights_literal_match_in_original_text_when_body_column_has_none() {
         })
         .unwrap();
 
-    assert_eq!(result.hits.len(), 1, "히트: {:?}", result.hits);
+    assert_eq!(result.hits.len(), 1, "hits: {:?}", result.hits);
     let snippet = result.hits[0].snippet.as_deref().unwrap_or_default();
     assert!(
         snippet.contains(">>레이아웃<<"),
-        "스니펫에 강조 표시가 없음: {snippet:?}"
+        "no highlight in the snippet: {snippet:?}"
     );
-    // 토큰 나열이 아니라 원문 그대로여야 한다 — 조사가 붙은 자연스러운 표현
-    // "레이아웃과"가 강조 주변에 그대로 남아있는지 확인한다.
+    // It must be the actual original text, not a list of tokens — verify that the natural
+    // expression "레이아웃과" (with the attached particle) still surrounds the highlight.
     assert!(
         snippet.contains(">>레이아웃<<과"),
-        "원문이 아니라 토큰 나열이 나온 것으로 보임: {snippet:?}"
+        "it looks like a list of tokens came out instead of the original text: {snippet:?}"
     );
 }
 
 #[test]
 fn highlights_kiwi_analyzed_stem_when_typed_query_itself_is_absent() {
-    // "수행함"으로 검색하면 Kiwi가 어간 "수행"으로 확장해 매칭시키지만, 원문엔
-    // "수행함"이 아니라 "수행한다"만 있다 — 타이핑한 검색어 그대로는 원문에서
-    // 못 찾는다. 이럴 땐 실제 매칭에 쓰인 어간("수행")으로 원문을 찾아 강조해야
-    // 한다(실제로 강조 없이 문서 맨 앞부분만 나오는 문제가 있었다).
+    // Searching for "수행함" makes Kiwi expand it to match the stem "수행", but the original
+    // text only has "수행한다", not "수행함" — the typed query itself can't be found in the
+    // original text. In this case, the original text must be located and highlighted using
+    // the stem actually used for matching ("수행") (a real bug caused the document to show
+    // with no highlight, just its beginning).
     let Some(kiwi_result) = KiwiTokenizer::from_env() else {
-        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR 미설정, 건너뜁니다");
+        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR not set, skipping");
         return;
     };
-    let kiwi = kiwi_result.expect("Kiwi 초기화 실패");
+    let kiwi = kiwi_result.expect("Kiwi initialization failed");
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -621,20 +631,20 @@ fn highlights_kiwi_analyzed_stem_when_typed_query_itself_is_absent() {
         })
         .unwrap();
 
-    assert_eq!(result.hits.len(), 1, "히트: {:?}", result.hits);
+    assert_eq!(result.hits.len(), 1, "hits: {:?}", result.hits);
     let snippet = result.hits[0].snippet.as_deref().unwrap_or_default();
     assert!(
         snippet.contains(">>수행<<한다"),
-        "어간이 원문에서 강조되지 않음: {snippet:?}"
+        "the stem was not highlighted in the original text: {snippet:?}"
     );
 }
 
 #[test]
 fn widens_highlight_to_include_trailing_symbol_not_part_of_any_fts5_token() {
-    // FTS5 기본 토크나이저는 "%"를 구분자로 보고 토큰에 포함하지 않는다. 그래서
-    // "3.2%"로 검색하면 스니펫이 ">>3.2<<%"처럼 강조가 검색어보다 짧게 나오는
-    // 문제가 실제로 있었다 — 강조 바로 뒤가 검색어의 나머지와 이어지면 넓혀야
-    // 한다.
+    // FTS5's default tokenizer treats "%" as a separator and excludes it from tokens. So a
+    // real bug caused a search for "3.2%" to produce a snippet like ">>3.2<<%", where the
+    // highlight was shorter than the query — when the text right after the highlight
+    // continues the rest of the query, the highlight must be widened.
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("보고서.txt"), "GDP 성장률은 3.2%였다.").unwrap();
 
@@ -663,11 +673,11 @@ fn widens_highlight_to_include_trailing_symbol_not_part_of_any_fts5_token() {
         })
         .unwrap();
 
-    assert_eq!(result.hits.len(), 1, "히트: {:?}", result.hits);
+    assert_eq!(result.hits.len(), 1, "hits: {:?}", result.hits);
     let snippet = result.hits[0].snippet.as_deref().unwrap_or_default();
     assert!(
         snippet.contains(">>3.2%<<"),
-        "강조에 %가 포함되지 않음: {snippet:?}"
+        "% was not included in the highlight: {snippet:?}"
     );
 }
 

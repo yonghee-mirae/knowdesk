@@ -1,4 +1,4 @@
-//! `documents` / `paths` 테이블 저장소.
+//! Repository for the `documents` / `paths` tables.
 
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -48,8 +48,8 @@ impl IndexStatus {
     }
 }
 
-/// `docs/04_Data_Model.md`의 `demotion_reason` 값. `EMPTY_TEXT`는 아직 문서에
-/// 반영되지 않은 미결 항목이라 포함하지 않는다.
+/// `demotion_reason` values from `docs/04_Data_Model.md`. `EMPTY_TEXT` is omitted since
+/// it's still an open item not yet reflected in the docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DemotionReason {
     Drm,
@@ -119,8 +119,8 @@ impl DocumentRepository {
         Self::get_tier(conn, document_id).map(|t| t.is_some())
     }
 
-    /// 이미 색인된 문서의 계층을 조회한다. 동일 내용(hash)이 이미 있으면
-    /// 재추출 없이 이 값을 그대로 재사용한다.
+    /// Looks up the tier of an already-indexed document. If identical content (by hash)
+    /// already exists, this value is reused as-is without re-extraction.
     pub fn get_tier(conn: &Connection, document_id: &str) -> rusqlite::Result<Option<IndexTier>> {
         conn.query_row(
             "SELECT index_tier FROM documents WHERE document_id = ?1",
@@ -152,14 +152,14 @@ impl DocumentRepository {
         Ok(())
     }
 
-    /// 경로가 사라졌을 때 호출한다 (파일 감시, B4). 그 경로를 지우고, 참조하던
-    /// 문서를 더 이상 아무 경로도 가리키지 않게 되면(orphan) `documents`/
-    /// `content_fts`/`document_bodies`까지 함께 정리한다. 동일 내용의 사본이
-    /// 다른 경로에도 있으면(예: 파일 복사본) 그 문서는 그대로 남는다.
+    /// Called when a path disappears (file watching, B4). Deletes that path, and if the
+    /// document it referenced no longer points to any path (orphaned), also cleans up
+    /// `documents`/`content_fts`/`document_bodies`. If a copy with identical content exists
+    /// at another path (e.g. a duplicated file), that document is left in place.
     ///
-    /// 네트워크 드라이브가 한꺼번에 오프라인되는 것과 실제 삭제를 구분하는 문제는
-    /// 미결 상태다(`KnowDesk_추가검토사항.md` D-1) — 지금은 감시 대상 경로 하나가
-    /// 사라지면 그대로 삭제로 처리한다.
+    /// Distinguishing a network drive going offline all at once from an actual deletion is
+    /// still an open issue (`KnowDesk_추가검토사항.md` D-1) — for now, if a single watched
+    /// path disappears, it is treated as a deletion outright.
     pub fn remove_path(conn: &Connection, path: &str) -> rusqlite::Result<Option<DocId>> {
         let document_id: Option<String> = conn
             .query_row(
@@ -194,7 +194,8 @@ impl DocumentRepository {
         Ok(Some(document_id))
     }
 
-    /// 색인 요약: (tier, 건수) 목록. `추가검토사항.md` B-3의 요약 문구 형식을 위한 것.
+    /// Index summary: list of (tier, count). Backs the summary text format in
+    /// `추가검토사항.md` B-3.
     pub fn count_by_tier(conn: &Connection) -> rusqlite::Result<Vec<(String, i64)>> {
         let mut stmt =
             conn.prepare("SELECT index_tier, COUNT(*) FROM documents GROUP BY index_tier")?;

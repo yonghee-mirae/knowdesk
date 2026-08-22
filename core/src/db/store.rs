@@ -1,6 +1,6 @@
-//! `DocumentStore` — 원문 저장 방식 추상화 (`docs/08_API_Contracts.md` 참조).
-//! 초기 구성은 원문을 그대로 저장하며, 압축 저장으로 전환하더라도 이 trait의
-//! 시그니처는 바뀌지 않게 유지한다.
+//! `DocumentStore` — abstraction over how original text is stored (see `docs/08_API_Contracts.md`).
+//! The initial configuration stores the original text as-is; this trait's signature is kept
+//! stable so it won't need to change even if storage switches to a compressed form.
 
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -42,7 +42,7 @@ mod tests {
     #[test]
     fn put_then_get_roundtrips() {
         let db = Db::open_in_memory().unwrap();
-        // documents FK 제약을 만족시키기 위해 최소 행을 먼저 넣는다.
+        // Insert a minimal row first to satisfy the documents FK constraint.
         db.conn
             .execute(
                 "INSERT INTO documents (document_id, file_size, text_bytes, index_tier, index_status)

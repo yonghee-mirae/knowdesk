@@ -1,4 +1,4 @@
-//! 기본 제외 규칙 (`docs/01_KnowDesk_PRD.md` 3장 "기본 제외 규칙").
+//! Default exclusion rules (`docs/01_KnowDesk_PRD.md` Chapter 3 "Default Exclusion Rules").
 
 use crate::config::{Config, DEFAULT_EXCLUDED_EXTENSIONS, DEFAULT_TEMP_PATTERNS};
 use std::path::Path;
@@ -10,7 +10,7 @@ pub enum SkipReason {
     OversizedFile,
 }
 
-/// 파일을 색인 대상에서 제외해야 하면 사유를 반환하고, 아니면 `None`을 반환한다.
+/// Returns a reason if the file should be excluded from indexing, or `None` otherwise.
 pub fn check(path: &Path, file_size: u64, config: &Config) -> Option<SkipReason> {
     let filename = path.file_name()?.to_string_lossy().to_lowercase();
 

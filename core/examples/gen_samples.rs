@@ -1,17 +1,17 @@
-//! 수동 테스트용 샘플 폴더 생성기.
+//! Sample folder generator for manual testing.
 //!
-//! 실행:
+//! Usage:
 //! ```text
-//! cargo run -p knowdesk-core --example gen_samples [출력 경로, 기본값 ./samples]
+//! cargo run -p knowdesk-core --example gen_samples [output path, default ./samples]
 //! ```
 //!
-//! 지금까지 구현된 범위(Phase A + Phase B1 XLSX/DOCX/PPTX/PDF)를 한 번에 수동 검증할 수 있게
-//! 정상 케이스와 제외 규칙 케이스를 함께 만든다. 생성물은 매번 재생성 가능하므로 git에는
-//! 커밋하지 않는다 (`.gitignore` 참조).
+//! Generates normal cases together with exclusion-rule cases so the currently implemented
+//! scope (Phase A + Phase B1 XLSX/DOCX/PPTX/PDF) can be manually verified in one go. The
+//! output can be regenerated at any time, so it is not committed to git (see `.gitignore`).
 //!
-//! PDF 추출은 네이티브 libpdfium이 있어야 실제로 동작한다. `KNOWDESK_PDFIUM_LIB_DIR`
-//! 환경 변수로 라이브러리 경로를 지정하지 않으면 `검토의견.pdf`는 META로 강등된다
-//! (오류가 아니라 이 프로젝트의 정상적인 강등 정책이다).
+//! PDF extraction only actually works if native libpdfium is available. If the library path
+//! isn't set via the `KNOWDESK_PDFIUM_LIB_DIR` environment variable, `검토의견.pdf` is
+//! downgraded to META (this is not an error — it's this project's normal downgrade policy).
 
 use std::fs;
 use std::io::Write;
@@ -23,7 +23,7 @@ fn main() {
         .nth(1)
         .unwrap_or_else(|| "./samples".to_string());
     let out_dir = Path::new(&out_dir);
-    fs::create_dir_all(out_dir).expect("출력 폴더 생성 실패");
+    fs::create_dir_all(out_dir).expect("failed to create output folder");
 
     write_txt_utf8(out_dir);
     write_txt_euckr(out_dir);
@@ -35,16 +35,16 @@ fn main() {
     write_pdf(out_dir);
     write_skip_cases(out_dir);
 
-    println!("샘플 생성 완료: {}", out_dir.display());
+    println!("Sample generation complete: {}", out_dir.display());
     println!();
-    println!("검증 방법:");
+    println!("How to verify:");
     println!(
         "  cargo run -p knowdesk-cli -- --db ./samples.db index {}",
         out_dir.display()
     );
     println!("  cargo run -p knowdesk-cli -- --db ./samples.db search \"채권 발행\"");
     println!(
-        "  cargo run -p knowdesk-cli -- --db ./samples.db search \"짓다\"  # Kiwi 연동 시 검색어도 형태소 분석 — 사전형으로 활용형을 찾음"
+        "  cargo run -p knowdesk-cli -- --db ./samples.db search \"짓다\"  # With Kiwi enabled, the query is also morphologically analyzed — finds inflected forms via the dictionary form"
     );
 }
 
@@ -57,7 +57,7 @@ fn write_txt_utf8(dir: &Path) {
 }
 
 fn write_txt_euckr(dir: &Path) {
-    // 인코딩 자동 감지(encoding_rs + chardetng) 확인용 — CP949/EUC-KR 저장 문서 대응.
+    // For verifying automatic encoding detection (encoding_rs + chardetng) — handles documents saved as CP949/EUC-KR.
     let (bytes, _, had_errors) =
         encoding_rs::EUC_KR.encode("회의록: 채권 발행 계획을 다음 분기로 연기한다.");
     assert!(!had_errors);
@@ -69,13 +69,13 @@ fn write_txt_unrelated(dir: &Path) {
 }
 
 fn write_txt_irregular_verb(dir: &Path) {
-    // "짓다"는 ㅅ 불규칙 동사라 과거형 "지었다"의 표면형에는 "짓"이라는 글자가
-    // 전혀 나타나지 않는다. bigram은 원문 글자 그대로 2글자씩 자르기만 하므로
-    // "짓"으로는 절대 찾을 수 없지만, Kiwi는 어간을 복원해 찾아낸다.
-    // 검색어 "짓"(어간)뿐 아니라 사전형 "짓다"로도 찾아진다 — Kiwi는 색인 시점에
-    // 어간을 복원하고(`content_fts.morph_kiwi`), 검색어도 형태소 분석해서 확장하기
-    // 때문이다 (`core/tests/index_search.rs`의 `finds_irregular_verb_stem_only_with_kiwi`,
-    // `expands_query_with_kiwi_to_find_dictionary_form`과 동일한 케이스).
+    // "짓다" is a ㅅ-irregular verb, so its past-tense surface form "지었다" never actually
+    // contains the character "짓". Since bigram just slices the original text two characters
+    // at a time, it can never find it via "짓", but Kiwi recovers the stem and finds it.
+    // It's found both by the query "짓" (the stem) and by the dictionary form "짓다" — because
+    // Kiwi recovers the stem at index time (`content_fts.morph_kiwi`) and also morphologically
+    // analyzes and expands the query (same case as `finds_irregular_verb_stem_only_with_kiwi`
+    // and `expands_query_with_kiwi_to_find_dictionary_form` in `core/tests/index_search.rs`).
     fs::write(dir.join("공사보고서.txt"), "그는 새 건물을 지었다.\n").unwrap();
 }
 
@@ -124,21 +124,22 @@ fn write_pptx(dir: &Path) {
 }
 
 fn write_pdf(dir: &Path) {
-    // LibreOffice headless로 만든 실제 PDF (한글 CID 폰트 임베딩) — `docs/06_Development_Roadmap.md`
-    // B1이 가장 리스크가 크다고 지목한 구간의 수동 검증용. libpdfium이 없으면 META로 강등된다.
+    // A real PDF generated with LibreOffice headless (embedded Korean CID font) — for manually
+    // verifying the section `docs/06_Development_Roadmap.md` flags as B1's highest-risk area.
+    // Downgraded to META if libpdfium is unavailable.
     const KOREAN_PDF: &[u8] = include_bytes!("../tests/fixtures/korean.pdf");
     fs::write(dir.join("검토의견.pdf"), KOREAN_PDF).unwrap();
 }
 
 fn write_skip_cases(dir: &Path) {
-    // 압축 파일 — 확장자 기준 제외 (PRD 3장 기본 제외 규칙)
+    // Archive file — excluded by extension (PRD Chapter 3 default exclusion rules)
     fs::write(
         dir.join("보관용.zip"),
         b"not a real zip, extension-only test",
     )
     .unwrap();
-    // 임시 파일 — Office 저장 시 생기는 임시파일 패턴
+    // Temp file — pattern of temp files created when Office saves a document
     fs::write(dir.join("~$규정.txt"), b"temp file placeholder").unwrap();
-    // 손상된 PDF — 확장자는 지원 대상이지만 파싱 실패 → META(PARSE_FAIL) 강등 확인용
+    // Corrupted PDF — extension is supported but parsing fails → verifies META(PARSE_FAIL) downgrade
     fs::write(dir.join("손상.pdf"), b"%PDF-1.4 not a real pdf body").unwrap();
 }

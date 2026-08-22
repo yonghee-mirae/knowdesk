@@ -1,8 +1,9 @@
-//! DOCX / PPTX 추출 (`zip` + `quick-xml`).
+//! DOCX / PPTX extraction (`zip` + `quick-xml`).
 //!
-//! 두 포맷 모두 텍스트가 `<*:t>` 요소에, 문단 경계가 `<*:p>` 종료 태그에 있다
-//! (DOCX는 `w:t`/`w:p`, PPTX는 `a:t`/`a:p` — 네임스페이스만 다르고 로컬 이름은
-//! 같아 `local_name()`으로 접두사를 벗기면 동일한 파서를 재사용할 수 있다).
+//! In both formats, text lives in `<*:t>` elements and paragraph boundaries are marked
+//! by `<*:p>` end tags (DOCX uses `w:t`/`w:p`, PPTX uses `a:t`/`a:p` — only the namespace
+//! differs; the local names match, so stripping the prefix with `local_name()` lets us
+//! reuse the same parser).
 
 use super::{ContentExtractor, DocumentInfo, ExtractError, ExtractionResult};
 use quick_xml::escape::unescape;
@@ -71,8 +72,9 @@ fn read_entry(archive: &mut zip::ZipArchive<File>, name: &str) -> Result<String,
     Ok(xml)
 }
 
-/// `ppt/slides/slide12.xml` -> `12`. 슬라이드 순서를 파일명 자릿수가 아니라
-/// 실제 숫자로 정렬하기 위함 (`slide10`이 `slide2`보다 사전식으로 앞서는 문제 방지).
+/// `ppt/slides/slide12.xml` -> `12`. Used to sort slides by their actual numeric
+/// value rather than filename digit order (avoids `slide10` sorting before `slide2`
+/// lexicographically).
 fn slide_number(name: &str) -> Option<u32> {
     let file_name = name.rsplit('/').next()?;
     let digits: String = file_name.chars().filter(|c| c.is_ascii_digit()).collect();
@@ -80,8 +82,8 @@ fn slide_number(name: &str) -> Option<u32> {
 }
 
 fn extract_paragraph_text(xml: &str) -> String {
-    // 텍스트를 trim하지 않는다 — DOCX/PPTX는 <w:t>/<a:t> 안의 공백(어절 경계)이
-    // 의미를 가지므로, 여기서 지우면 "채권"+"발행"이 "채권발행"으로 붙어버린다.
+    // Do not trim the text — in DOCX/PPTX, the whitespace inside <w:t>/<a:t> (word
+    // boundaries) is meaningful; stripping it here would merge "채권"+"발행" into "채권발행".
     let mut reader = Reader::from_str(xml);
 
     let mut body = String::new();
@@ -111,7 +113,7 @@ fn extract_paragraph_text(xml: &str) -> String {
                 }
             }
             Ok(Event::Eof) => break,
-            Err(_) => break, // 손상된 XML은 여기까지 모은 텍스트만 반환 (META 강등은 호출부 책임)
+            Err(_) => break, // On malformed XML, return only the text gathered so far (demoting to META is the caller's responsibility)
             _ => {}
         }
     }
@@ -186,7 +188,7 @@ mod tests {
     fn extracts_pptx_slides_in_numeric_order() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sample.pptx");
-        sample_pptx(&path, 11); // slide10/slide11이 slide2보다 사전식으로 앞서는 케이스 포함
+        sample_pptx(&path, 11); // includes the case where slide10/slide11 would sort before slide2 lexicographically
 
         let result = PptxExtractor
             .extract(&DocumentInfo {

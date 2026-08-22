@@ -7,7 +7,7 @@ pub mod store;
 use rusqlite::Connection;
 use std::path::Path;
 
-/// 색인 DB 핸들. 마이그레이션까지 실행된 상태로 반환된다.
+/// Index DB handle. Returned with migrations already applied.
 pub struct Db {
     pub conn: Connection,
 }

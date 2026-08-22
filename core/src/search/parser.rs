@@ -1,8 +1,9 @@
 //! Query Parser (`docs/05_Search_Language_v1.md`).
 //!
-//! Keyword/Phrase/AND/OR/NOT/Prefix는 FTS5 MATCH 문법이 이미 그대로 지원하므로,
-//! 여기서 할 일은 필터 토큰(`ext:`/`path:`/`tier:`/`drm:`/`modified>`/`modified<`)을
-//! 걷어내고 나머지를 FTS5 MATCH 문자열로 그대로 넘기는 것이다.
+//! Keyword/Phrase/AND/OR/NOT/Prefix are already supported as-is by FTS5 MATCH
+//! syntax, so the job here is to strip out filter tokens
+//! (`ext:`/`path:`/`tier:`/`drm:`/`modified>`/`modified<`) and pass the rest
+//! straight through as an FTS5 MATCH string.
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filters {
@@ -17,8 +18,9 @@ pub struct Filters {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedQuery {
     pub match_expr: String,
-    /// 필터를 걷어낸 리터럴 검색어 토큰들. `match_expr`은 이걸 공백으로 합친 것과
-    /// 같다 — 검색어 확장(`search::service`)이 토큰 단위로 다시 손봐야 해서 따로 둔다.
+    /// The literal search-term tokens with filters stripped out. `match_expr`
+    /// is just these joined with spaces — kept separate because query
+    /// expansion (`search::service`) needs to rework them token by token.
     pub terms: Vec<String>,
     pub filters: Filters,
 }
@@ -52,18 +54,20 @@ pub fn parse(input: &str) -> ParsedQuery {
     }
 }
 
-/// `term`이 형태소 분석을 적용해도 안전한 "평범한 검색어"인지 판별한다.
-/// 문구("..."), 접두 검색(발행*), AND/OR/NOT 연산자는 FTS5 문법 그대로 둬야 하므로
-/// 분석 대상에서 제외한다.
+/// Determines whether `term` is a "plain search term" that's safe to run
+/// through morphological analysis. Phrases ("..."), prefix search (발행*),
+/// and AND/OR/NOT operators must be left as FTS5 syntax, so they're excluded
+/// from analysis.
 pub fn is_plain_keyword(term: &str) -> bool {
     !term.starts_with('"') && !term.ends_with('*') && !matches!(term, "AND" | "OR" | "NOT")
 }
 
-/// "3.2%"·"2026-08-21"·"P/E"처럼 FTS5 문법에서 특수 의미를 갖는 문자(마침표,
-/// 하이픈, 슬래시 등)가 든 평범한 검색어를 그대로 넘기면 FTS5 파서가 구문 오류를
-/// 낸다(실제로 확인됨). 그런 검색어는 통째로 구문("...")으로 감싸 리터럴 취급되게
-/// 한다. 문구/AND·OR·NOT/접두 검색(`발행*`)은 FTS5 문법 그대로 둬야 하므로 손대지
-/// 않는다.
+/// Passing a plain search term containing characters that have special
+/// meaning in FTS5 syntax (period, hyphen, slash, etc.) — like "3.2%",
+/// "2026-08-21", or "P/E" — straight through causes the FTS5 parser to raise
+/// a syntax error (confirmed in practice). Such terms are wrapped whole in a
+/// phrase ("...") so they're treated as literals. Phrases/AND·OR·NOT/prefix
+/// search (`발행*`) are left untouched since they must stay as FTS5 syntax.
 fn sanitize_term(term: &str) -> String {
     if term.starts_with('"') || matches!(term, "AND" | "OR" | "NOT") {
         return term.to_string();
@@ -80,12 +84,13 @@ fn sanitize_term(term: &str) -> String {
     }
 }
 
-/// FTS5가 인용 없이 안전하게 받아들이는 형태(문자/숫자/밑줄로만 구성)인지.
+/// Whether this is a form FTS5 safely accepts without quoting (consists only
+/// of letters/digits/underscore).
 fn is_safe_bareword(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// 공백으로 나누되, `"..."` 구문은 하나의 토큰으로 유지한다.
+/// Splits on whitespace, but keeps `"..."` phrases as a single token.
 fn tokenize(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
@@ -136,9 +141,11 @@ mod tests {
 
     #[test]
     fn quotes_terms_with_fts5_special_characters() {
-        // FTS5 문법에서 특수 의미를 갖는 문자(마침표/퍼센트/하이픈/슬래시)가 든
-        // 검색어를 그대로 넘기면 파서가 구문 오류를 낸다(실제로 확인됨). 통째로
-        // 구문으로 감싸 리터럴 취급되게 해야 한다.
+        // Passing a search term containing characters that have special
+        // meaning in FTS5 syntax (period/percent/hyphen/slash) straight
+        // through causes the parser to raise a syntax error (confirmed in
+        // practice). It must be wrapped whole in a phrase so it's treated as
+        // a literal.
         assert_eq!(parse("3.2%").match_expr, "\"3.2%\"");
         assert_eq!(parse("2026-08-21").match_expr, "\"2026-08-21\"");
         assert_eq!(parse("P/E").match_expr, "\"P/E\"");

@@ -26,8 +26,6 @@ tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
 # Global hotkey to reveal the search window from anywhere (TASK-802).
 tauri-plugin-global-shortcut = "2"
-# Native folder-picker dialog for the Settings Window (TASK-704).
-tauri-plugin-dialog = "2"
 knowdesk-core = { path = "../core" }
 # App-data directory resolution for the index DB path (docs/03_Architecture.md: OS
 # integration lives in src-tauri, never in `core`).

@@ -27,7 +27,7 @@ use std::time::Duration;
 
 pub struct FileWatcher {
     // Watching stops when this is dropped, so it must be kept held.
-    _watcher: RecommendedWatcher,
+    watcher: RecommendedWatcher,
     raw_events: Receiver<Event>,
     debounce: Duration,
 }
@@ -60,10 +60,22 @@ impl FileWatcher {
             watcher.watch(root.as_ref(), RecursiveMode::Recursive)?;
         }
         Ok(Self {
-            _watcher: watcher,
+            watcher,
             raw_events,
             debounce,
         })
+    }
+
+    /// Adds one more root to the set already being watched, without needing to
+    /// recreate the whole `FileWatcher` - lets a caller apply a live folder-list
+    /// change (e.g. "설정 적용"/Reload, `src-tauri`'s index worker) in place.
+    pub fn watch(&mut self, root: &Path) -> notify::Result<()> {
+        self.watcher.watch(root, RecursiveMode::Recursive)
+    }
+
+    /// Stops watching a root previously passed to `new`/`watch`.
+    pub fn unwatch(&mut self, root: &Path) -> notify::Result<()> {
+        self.watcher.unwatch(root)
     }
 
     /// Blocks, waiting to receive one debounced list of changed paths. Returns `None`

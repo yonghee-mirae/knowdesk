@@ -12,13 +12,19 @@ pub const DEFAULT_TEMP_PATTERNS: &[&str] = &["~$", ".tmp", ".temp", ".cache"];
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Only meaningful to `knowdesk-cli` (its `--db` flag sets this directly).
+    /// Never written to or read from `settings.json` (`#[serde(skip)]`) - the
+    /// GUI computes its own DB path independently (`src-tauri`'s `db_path()`:
+    /// `KNOWDESK_DB_PATH` env var, else a fixed per-OS default) and never
+    /// touches this field.
+    #[serde(skip)]
     pub db_path: PathBuf,
     pub max_file_size_mb: u64,
-    /// Folders to index and continuously watch (`docs/12_UI_Spec.md` C5's
-    /// Settings Window mockup, TASK-704 — registering folders through that UI
-    /// isn't built yet, so today this is only populated by hand-editing
-    /// `settings.json`). Empty by default: nothing is indexed until at least
-    /// one folder is listed here.
+    /// Folders to index and continuously watch. There's no in-app UI for this
+    /// (TASK-704 — replaced with a "설정 파일 폴더 열기" action instead of a
+    /// Settings Window, `src-tauri`'s `open_settings_folder`) - populated by
+    /// hand-editing `settings.json` in a text editor. Empty by default:
+    /// nothing is indexed until at least one folder is listed here.
     pub watched_folders: Vec<PathBuf>,
 }
 
@@ -61,24 +67,6 @@ impl Config {
     pub fn max_file_size_bytes(&self) -> u64 {
         self.max_file_size_mb * 1024 * 1024
     }
-
-    /// Adds `folder` to `watched_folders` if it isn't already there. Returns
-    /// whether it was newly added (`false` if it was already present).
-    pub fn add_watched_folder(&mut self, folder: PathBuf) -> bool {
-        if self.watched_folders.contains(&folder) {
-            return false;
-        }
-        self.watched_folders.push(folder);
-        true
-    }
-
-    /// Removes `folder` from `watched_folders`. Returns whether it was present
-    /// (and therefore actually removed).
-    pub fn remove_watched_folder(&mut self, folder: &Path) -> bool {
-        let before = self.watched_folders.len();
-        self.watched_folders.retain(|f| f != folder);
-        self.watched_folders.len() != before
-    }
 }
 
 #[cfg(test)]
@@ -113,8 +101,10 @@ mod tests {
         // Nested, not-yet-existing directory - `save()` must create it.
         let path = dir.path().join("nested").join("settings.json");
 
-        let mut config = Config::default();
-        config.add_watched_folder(PathBuf::from("/a/이사회"));
+        let config = Config {
+            watched_folders: vec![PathBuf::from("/a/이사회")],
+            ..Config::default()
+        };
         config.save(&path).unwrap();
 
         let reloaded = Config::load(Some(&path)).unwrap();
@@ -122,26 +112,40 @@ mod tests {
     }
 
     #[test]
-    fn add_watched_folder_dedupes() {
-        let mut config = Config::default();
-        assert!(config.add_watched_folder(PathBuf::from("/a")));
+    fn save_never_writes_db_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+
+        Config::default().save(&path).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
         assert!(
-            !config.add_watched_folder(PathBuf::from("/a")),
-            "adding the same folder twice should report it wasn't newly added"
+            !text.contains("db_path"),
+            "settings.json must not mention db_path - only KNOWDESK_DB_PATH/the built-in default control it: {text}"
         );
-        assert_eq!(config.watched_folders, vec![PathBuf::from("/a")]);
+
+        // A hand-edited settings.json that *does* still have an old `db_path`
+        // entry (from before this changed) must not error out - it's just
+        // ignored, like any other unknown field.
+        std::fs::write(
+            &path,
+            r#"{"db_path": "/somewhere/custom.db", "watched_folders": []}"#,
+        )
+        .unwrap();
+        Config::load(Some(&path)).unwrap();
     }
 
     #[test]
-    fn remove_watched_folder_reports_whether_it_was_present() {
-        let mut config = Config::default();
-        config.add_watched_folder(PathBuf::from("/a"));
+    fn save_creates_file_with_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        assert!(!path.exists());
 
-        assert!(config.remove_watched_folder(Path::new("/a")));
-        assert!(config.watched_folders.is_empty());
-        assert!(
-            !config.remove_watched_folder(Path::new("/a")),
-            "removing an already-absent folder should report false"
-        );
+        Config::default().save(&path).unwrap();
+
+        assert!(path.exists());
+        let reloaded = Config::load(Some(&path)).unwrap();
+        assert_eq!(reloaded.watched_folders, Vec::<PathBuf>::new());
+        assert_eq!(reloaded.max_file_size_mb, DEFAULT_MAX_FILE_SIZE_MB);
     }
 }

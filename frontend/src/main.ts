@@ -173,7 +173,7 @@ function selectIndex(index: number): void {
 searchBar.addEventListener('kd-query-input', () => scheduleSearch());
 searchBar.addEventListener('kd-mode-change', (e) => setMode((e as CustomEvent<SearchMode>).detail));
 searchBar.addEventListener('kd-theme-toggle', () => searchBar.setThemeIcon(toggleTheme()));
-searchBar.addEventListener('kd-open-settings', () => void backend.openSettingsWindow());
+searchBar.addEventListener('kd-open-settings', () => void backend.openSettingsFolder());
 resultList.addEventListener('kd-row-click', (e) => selectIndex((e as CustomEvent<number>).detail));
 
 window.addEventListener('keydown', (e) => {

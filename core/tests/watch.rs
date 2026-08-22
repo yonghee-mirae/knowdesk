@@ -209,6 +209,46 @@ fn watch_multiple_roots_on_a_single_watcher() {
 }
 
 #[test]
+fn watch_and_unwatch_change_the_live_root_set() {
+    // "설정 적용"/Reload (`src-tauri`'s index worker) adds/removes roots on an
+    // already-running `FileWatcher` instead of recreating it - pins that
+    // `watch`/`unwatch` actually take effect live.
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+
+    let mut watcher = FileWatcher::new(&[dir_a.path()], DEBOUNCE).unwrap();
+
+    // `dir_b` isn't watched yet - a change there produces nothing.
+    std::fs::write(dir_b.path().join("결의.txt"), "이사회 결의").unwrap();
+    assert!(
+        watcher.recv_timeout(WAIT).is_none(),
+        "an unwatched root's change must not produce an event"
+    );
+
+    // Watching it live picks up subsequent changes.
+    watcher.watch(dir_b.path()).unwrap();
+    std::fs::write(dir_b.path().join("결의2.txt"), "예산 승인").unwrap();
+    assert!(
+        watcher.recv_timeout(WAIT).is_some(),
+        "did not receive an event from a root added live via watch()"
+    );
+
+    // Unwatching `dir_a` live stops further events from it, while `dir_b`
+    // (still watched) keeps working.
+    watcher.unwatch(dir_a.path()).unwrap();
+    std::fs::write(dir_a.path().join("규정.txt"), "채권 발행 절차").unwrap();
+    assert!(
+        watcher.recv_timeout(WAIT).is_none(),
+        "a root removed live via unwatch() must not produce further events"
+    );
+    std::fs::write(dir_b.path().join("결의3.txt"), "또 다른 결의").unwrap();
+    assert!(
+        watcher.recv_timeout(WAIT).is_some(),
+        "an untouched, still-watched root must keep producing events"
+    );
+}
+
+#[test]
 fn watch_ignores_short_lived_temp_file_from_office_style_save() {
     // Simulates the temp file (`~$filename`) that Office creates on save and soon deletes.
     // If it disappears within the debounce window, there should be no indexing attempt at all.

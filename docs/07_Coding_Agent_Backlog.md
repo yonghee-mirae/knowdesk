@@ -146,9 +146,15 @@ TASK-703 Preview Pane (+ Highlight + Snippet)
 
 TASK-705 File/Folder Actions (Open File / Open Folder / Copy Path — 키보드 전용)
 
-TASK-706 Index Worker (완료) — `src-tauri`에 배선된 색인/감시 백그라운드 워커. `Config.watched_folders` 목록을 앱 시작 시 전체 스캔 후 계속 감시(`core/src/index/watcher.rs`의 `FileWatcher::new`가 폴더 여러 개를 한 watcher/스레드에 묶어, 폴더 수만큼 `KiwiTokenizer` 인스턴스가 늘어나는 것을 막음). 폴더 목록을 채우는 UI(TASK-704)가 아직 없어서, 지금은 `KNOWDESK_SETTINGS_PATH`(또는 기본 위치의 `settings.json` — 색인 DB와 같은 폴더, 2026-08-22 결정)를 직접 편집해야 동작함 — 목록이 비어 있으면(기본값) 워커 자체가 안 뜬다.
+TASK-706 Index Worker (완료) — `src-tauri`에 배선된 색인/감시 백그라운드 워커. `Config.watched_folders` 목록을 앱 시작 시 전체 스캔 후 계속 감시(`core/src/index/watcher.rs`의 `FileWatcher::new`가 폴더 여러 개를 한 watcher/스레드에 묶어, 폴더 수만큼 `KiwiTokenizer` 인스턴스가 늘어나는 것을 막음). 폴더 목록을 채우는 UI(TASK-704)가 아직 없어서, 지금은 `KNOWDESK_SETTINGS_PATH`(또는 기본 위치의 `settings.json` — 색인 DB와 같은 폴더, 2026-08-22 결정)를 직접 편집해야 함 — 그 편집·삭제 자체는 아래 참조대로 자동 반영되므로 편집 후 별도 조작은 필요 없다. 목록이 비어 있으면(기본값) 워커는 항상 뜨지만 폴더가 없어서 아무것도 안 할 뿐이다.
 
-TASK-704 Settings Window (완료, 2026-08-22 — 범위를 "색인 대상 폴더" 목록으로만 한정) — 새 "settings" 창(온디맨드 생성, 검색창처럼 미리 만들어두지 않음 — P95 300ms 요구 대상이 아니고 자주 안 열림)에 폴더 추가(네이티브 폴더 선택 다이얼로그, `tauri-plugin-dialog`)/제거 UI. `Config.watched_folders`를 읽고 쓰는 IPC 커맨드(`get_watched_folders`/`add_watched_folder`/`remove_watched_folder`)와 `Config::save`/`add_watched_folder`/`remove_watched_folder`(`core/src/config.rs`)로 구현. 폴더 추가 시 즉시 1회 스캔(백그라운드 스레드, `scan_folder_once`)해 바로 검색 가능해지지만, 지속 감시(watch)는 다음 재시작부터 시작됨(`run_index_worker`가 시작 시점 목록으로 `FileWatcher`를 한 번만 구성) — 재시작 없이 즉시 감시까지 붙이려면 워커를 컨트롤 채널이 있는 상시 액터로 다시 설계해야 하는데, 이번 범위에서는 보류. 폴더 제거는 목록에서만 빠지고 이미 색인된 문서는 안 지움(전체 삭제는 "색인 초기화" — 아직 없음). mockup의 나머지 항목(제외 패턴 편집, 전역 단축키 변경 UI, 검색 결과 개수, 자동 실행, DB 위치 변경, 색인 초기화)은 범위 밖.
+⚠️ **재설계 이력:**
+1. (2026-08-22) 트레이의 Reload가 앱 재시작(`AppHandle::restart()`) 방식이었을 때 `npm run tauri dev`에서 실제로 멈추는 문제가 발견되어(`12_UI_Spec.md` C4 참조), IndexWorker를 컨트롤 채널이 있는 상시 액터로 다시 만들었다(`SearchWorker`와 같은 모양) — `IndexCommand::Reload`를 받으면 스레드 안에서 `settings.json`을 다시 읽고 `apply_folder_diff`로 `watched_folders` 변경분만 적용.
+2. (2026-08-23) 그 컨트롤 채널·트레이의 "Reload" 항목을 전부 없앴다 — "파일 감시 기능이 이미 있으니 설정 파일에도 그대로 적용해라"는 지시에 따라, `run_index_worker`가 색인 대상 폴더용 `FileWatcher`와 별개로 `settings.json`이 있는 폴더도 감시하도록 바꿈. 수정 이벤트가 오면 `reload_settings`로 다시 읽어 `apply_folder_diff` 적용(추가된 폴더는 스캔+`FileWatcher::watch`, 빠진 폴더는 `FileWatcher::unwatch`), 삭제 이벤트가 오면(파일이 실제로 없어졌는지 확인 후) `Config::default()`로 재생성 — 수동 "Reload" 자체가 필요 없어짐. `KiwiTokenizer`는 여전히 폴더가 실제로 생기기 전까지 로드를 미룬다(메모리 낭비 방지, `06_Development_Roadmap.md` S-2).
+
+TASK-704 Settings Window → "설정 파일 폴더 열기"로 대체 (완료, 2026-08-22) — Settings Window를 실제로 만들었다가(폴더 추가/제거 UI, `tauri-plugin-dialog` 네이티브 다이얼로그) 사용자 지시로 걷어내고, 훨씬 단순한 방식으로 교체했다: 트레이 메뉴/검색바 톱니바퀴의 "설정"이 이제 `settings.json`이 들어있는 폴더를 OS 파일 관리자로 열어주기만 하고(`open_settings_folder`), 그 파일을 텍스트 에디터로 직접 편집하는 게 UI 전체다. `run()`이 시작 시 `settings.json`이 없으면 `Config::default().save(...)`로 기본값 파일을 만들어둔다(빈 파일 상태로 시작하지 않게). 폴더 추가/제거 IPC 커맨드, 네이티브 폴더 선택 다이얼로그, 새 "settings" 창은 전부 제거됨.
+
+⚠️ **버그 발견·제거(2026-08-22):** 되돌리기 전 버전에서 "폴더 추가" 클릭 시 앱 전체가 멈추는 문제가 실제로 발생했다. 원인: `tauri_plugin_dialog`의 `blocking_pick_folder()`를 **동기(non-async)** `#[tauri::command]` 안에서 호출함 — 동기 커맨드의 본문은 IPC 콜백이 온 스레드(WKWebView 기준 메인 스레드)에서 그대로 실행되는데, `blocking_pick_folder()`는 실제 다이얼로그 표시를 `run_on_main_thread`로 메인 스레드에 넘기고 그 결과를 **동기적으로 대기**한다 — 호출자가 이미 메인 스레드면 그 대기가 영원히 안 풀리는 데드락이었다. 기능 자체를 없애면서 이 버그도 같이 사라졌다.
 
 ---
 

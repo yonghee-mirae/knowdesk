@@ -204,6 +204,18 @@ impl DocumentRepository {
         Ok(rows)
     }
 
+    /// Wipes every indexed document (`paths`/`document_bodies`/`content_fts`/
+    /// `documents`) while leaving the schema itself intact - "색인 초기화"
+    /// (Reset Index, tray menu action). The caller is responsible for
+    /// re-scanning the watched folders afterward; this only clears the DB.
+    pub fn reset_all(conn: &Connection) -> rusqlite::Result<()> {
+        conn.execute("DELETE FROM paths", [])?;
+        conn.execute("DELETE FROM document_bodies", [])?;
+        conn.execute("DELETE FROM content_fts", [])?;
+        conn.execute("DELETE FROM documents", [])?;
+        Ok(())
+    }
+
     pub fn count_by_demotion_reason(conn: &Connection) -> rusqlite::Result<Vec<(String, i64)>> {
         let mut stmt = conn.prepare(
             "SELECT demotion_reason, COUNT(*) FROM documents
@@ -213,5 +225,46 @@ impl DocumentRepository {
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+
+    #[test]
+    fn reset_all_clears_documents_and_paths() {
+        let db = Db::open_in_memory().unwrap();
+        DocumentRepository::upsert_document(
+            &db.conn,
+            &DocumentRecord {
+                document_id: "abc".to_string(),
+                file_size: 10,
+                text_bytes: 5,
+                index_tier: IndexTier::Full,
+                index_status: IndexStatus::Indexed,
+                demotion_reason: None,
+            },
+        )
+        .unwrap();
+        DocumentRepository::upsert_path(
+            &db.conn,
+            &PathRecord {
+                path: "/a/b.txt".to_string(),
+                document_id: "abc".to_string(),
+                filename: "b.txt".to_string(),
+                extension: "txt".to_string(),
+                modified_at: None,
+            },
+        )
+        .unwrap();
+
+        DocumentRepository::reset_all(&db.conn).unwrap();
+
+        assert!(DocumentRepository::count_by_tier(&db.conn)
+            .unwrap()
+            .is_empty());
+        assert!(!DocumentRepository::exists(&db.conn, "abc").unwrap());
     }
 }

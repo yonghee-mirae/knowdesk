@@ -13,6 +13,9 @@ pub enum SearchMode {
 pub struct SearchRequest {
     pub query: String,
     pub mode: SearchMode,
+    /// `0` (or any negative value) means no limit - every match is returned
+    /// (`SqliteSearchService::search` normalizes it to SQLite's own
+    /// "negative `LIMIT` means unlimited" convention before querying).
     pub limit: i64,
 }
 

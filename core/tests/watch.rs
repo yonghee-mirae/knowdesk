@@ -249,6 +249,34 @@ fn watch_and_unwatch_change_the_live_root_set() {
 }
 
 #[test]
+fn set_debounce_takes_effect_immediately() {
+    // Live-reloading `settings.json`'s `file_watch_debounce_ms` (`src-tauri`'s
+    // index worker) mutates the field in place rather than recreating the
+    // watcher - pins that a change actually applies to the very next settle,
+    // not just on some later watcher recreation.
+    let dir = tempfile::tempdir().unwrap();
+    // Starts with a debounce far longer than this test should ever have to
+    // wait, so a passing result can only be explained by `set_debounce`
+    // actually taking effect - not by coincidentally finishing before the
+    // original value's settle window would have elapsed anyway.
+    let mut watcher = FileWatcher::new(&[dir.path()], Duration::from_secs(5)).unwrap();
+    watcher.set_debounce(Duration::from_millis(50));
+
+    std::fs::write(dir.path().join("규정.txt"), "채권 발행 절차").unwrap();
+
+    let start = std::time::Instant::now();
+    assert!(
+        watcher.recv_timeout(WAIT).is_some(),
+        "expected a change event"
+    );
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "set_debounce should have taken effect immediately, took {:?}",
+        start.elapsed()
+    );
+}
+
+#[test]
 fn watch_ignores_short_lived_temp_file_from_office_style_save() {
     // Simulates the temp file (`~$filename`) that Office creates on save and soon deletes.
     // If it disappears within the debounce window, there should be no indexing attempt at all.

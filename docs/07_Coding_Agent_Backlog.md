@@ -156,13 +156,23 @@ TASK-704 Settings Window → "설정 파일 폴더 열기"로 대체 (완료, 20
 
 ⚠️ **버그 발견·제거(2026-08-22):** 되돌리기 전 버전에서 "폴더 추가" 클릭 시 앱 전체가 멈추는 문제가 실제로 발생했다. 원인: `tauri_plugin_dialog`의 `blocking_pick_folder()`를 **동기(non-async)** `#[tauri::command]` 안에서 호출함 — 동기 커맨드의 본문은 IPC 콜백이 온 스레드(WKWebView 기준 메인 스레드)에서 그대로 실행되는데, `blocking_pick_folder()`는 실제 다이얼로그 표시를 `run_on_main_thread`로 메인 스레드에 넘기고 그 결과를 **동기적으로 대기**한다 — 호출자가 이미 메인 스레드면 그 대기가 영원히 안 풀리는 데드락이었다. 기능 자체를 없애면서 이 버그도 같이 사라졌다.
 
+⚠️ **버그 발견·수정 (2026-08-24):** `file_watch_debounce_ms`를 설정값으로 빼면서 발견 - `settings.json`에서 폴더를 지운 직후 그 폴더에 파일을 하나 쓰면(`index_worker_applies_settings_file_changes_live` 테스트가 정확히 이 순서), `notify`가 이미 큐에 넣어둔 그 생성 이벤트가 `apply_folder_diff`의 `unwatch()` 호출과 무관하게 그대로 살아남아 결국 색인돼버리는 경쟁 상태가 실제로 있었다 - `unwatch()`는 앞으로의 이벤트만 막고, 이미 채널에 들어온 이벤트를 되돌려 지우지는 않기 때문. 설정 파일 워처의 debounce를 3000ms→200ms로 줄이면서 타이밍이 바뀌어 이 경쟁이 매번 재현되는 쪽으로 굳어져 발견됨(전엔 우연히 안전한 순서로 풀렸을 뿐). 근본 수정: `run_index_worker`가 `folder_watcher`에서 받은 이벤트를 색인하기 직전, 그 경로가 **현재** `watched` 목록 아래에 있는지 다시 한번 필터링 - 타이밍에 의존하지 않는 결정적 수정.
+
+⚠️ **설정값 완전성 재검토 (2026-08-24):** 폐기된 Settings Window mockup(`12_UI_Spec.md` C5)에 있던 항목들이 실제로 `settings.json`에 다 반영됐는지 전수 점검하고, 빠져 있던 것들을 추가했다 — `core::config::Config`에 `excluded_extensions`/`excluded_temp_patterns`(기존엔 고정 상수), `hotkey`(TASK-802 참조), `result_limit`(기존엔 프론트엔드 상수) 4개 필드 신설. `색인 초기화`는 값이 아니라 동작이라 트레이 메뉴 액션("Reset Index")으로 별도 구현(아래 Tray 섹션). `색인 DB 저장 위치`는 이미 확정된 배제 결정(`core/src/config.rs`의 `db_path` `#[serde(skip)]`)을 그대로 유지, `시작 시 자동 실행`은 새 의존성이 필요한 별도 기능이라 이번 범위에서 제외, `색인 스로틀링 파라미터`는 기존 비노출 결정 유지 - 자세한 표는 `12_UI_Spec.md` C5 참조.
+
+⚠️ **후속 조정 (2026-08-24, 이어서):** ①`result_limit`은 `0`을 무제한으로 해석하도록 `core::search::SearchRequest`/`SqliteSearchService`에 정규화 로직 추가(SQLite의 "음수 `LIMIT`은 무제한" 관례로 변환), 기본값도 무제한(`0`)으로 변경. ②하드코딩 값 전체 재검토에서 찾은 `file_watch_debounce_ms`(폴더 감시 debounce, 기존 3000ms 고정)를 설정값으로 추가. ③`settings.json` 자신을 감시하는 워처의 debounce는 설정값으로 빼지 않고 3000ms→200ms 내부 고정값으로만 낮춤 - 사용자가 튜닝할 대상이 아니라는 판단.
+
 ---
 
 ## Tray
 
 TASK-801 Tray Manager
 
+⚠️ **Reset Index 추가 (2026-08-24):** 트레이 우클릭 메뉴에 "Reset Index" 항목 신설 (`Settings` / 구분선 / `Reset Index` / 구분선 / `Quit`). 클릭 시 `tauri_plugin_dialog`의 non-blocking `.show()` 콜백으로 확인 다이얼로그를 띄우고(TASK-704 데드락의 원인이었던 `blocking_*` API는 쓰지 않음), 확인되면 채널로 색인 워커 스레드에 신호를 보내 `core::db::documents::DocumentRepository::reset_all`로 DB를 비운 뒤 감시 중인 모든 폴더를 처음부터 재스캔한다.
+
 TASK-802 Hotkey Manager (창 사전 생성 + show/focus 방식 — P95 300ms 대응)
+
+⚠️ **설정값으로 전환 (2026-08-24):** 하드코딩 상수(`DEFAULT_HOTKEY`, `src-tauri`)였던 걸 `core::config::Config::hotkey`로 옮겨 `settings.json`에서 바꿀 수 있게 했다. `settings.json` 변경 감지 시 색인 워커가 부르는 콜백(`run()`이 `spawn_index_worker`에 넘긴 `on_settings_reload`)이 이전 값을 `global_shortcut().unregister()`하고 새 값을 재등록한다 — 재시작 불필요. 이 콜백을 인젝션한 이유: `run_index_worker`/`spawn_index_worker`는 `AppHandle` 없이도 그대로 유닛 테스트되게 유지하기 위함(가짜 Tauri 앱을 안 만들어도 됨).
 
 ---
 

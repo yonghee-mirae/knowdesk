@@ -78,6 +78,14 @@ impl FileWatcher {
         self.watcher.unwatch(root)
     }
 
+    /// Changes the debounce window for events received from now on - takes
+    /// effect immediately, no need to recreate the watcher (`settle` reads
+    /// this field fresh on every call). Used for live-reloading
+    /// `settings.json`'s `file_watch_debounce_ms` in place.
+    pub fn set_debounce(&mut self, debounce: Duration) {
+        self.debounce = debounce;
+    }
+
     /// Blocks, waiting to receive one debounced list of changed paths. Returns `None`
     /// once watching ends (channel closed).
     pub fn recv(&self) -> Option<Vec<PathBuf>> {

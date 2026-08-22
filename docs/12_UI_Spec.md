@@ -101,8 +101,8 @@ C1 레이아웃의 우측 패널. 별도 화면이 아니라 결과 리스트 �
 
 ## C4. 트레이 & 전역 단축키
 
-- 트레이 아이콘 좌클릭 또는 전역 단축키(기본값 확정 필요, 설정에서 변경 가능)로 검색창 **토글**(닫혀 있으면 표시, 열려 있으면 숨김) — 2026-08-22부터 좌클릭도 단축키와 동일하게 토글로 통일.
-- 트레이 우클릭 메뉴(2026-08-23 확정, 영문 표기): **Settings** / 구분선 / **Quit**. "검색창 열기"는 좌클릭이 이미 담당해서 메뉴에 없고, **"Reload"도 없다** — `settings.json`은 색인 대상 폴더와 똑같이 파일 감시 대상이라(`06_Development_Roadmap.md` TASK-706), 손으로 편집하거나 삭제해도 수동 조작 없이 자동으로 반영된다. Settings는 그 파일이 든 폴더를 OS 파일 관리자로 여는 것뿐(Settings Window 대체, 위 참조).
+- 트레이 아이콘 좌클릭 또는 전역 단축키(`settings.json`의 `hotkey` 필드, 기본값 `CmdOrCtrl+Alt+K` - 2026-08-24부터 설정에서 실제로 변경 가능하고 저장 즉시 재등록됨, 아래 참조)로 검색창 **토글**(닫혀 있으면 표시, 열려 있으면 숨김) — 2026-08-22부터 좌클릭도 단축키와 동일하게 토글로 통일.
+- 트레이 우클릭 메뉴(2026-08-24 갱신, 영문 표기): **Settings** / 구분선 / **Reset Index** / 구분선 / **Quit**. "검색창 열기"는 좌클릭이 이미 담당해서 메뉴에 없고, **"Reload"도 없다** — `settings.json`은 색인 대상 폴더와 똑같이 파일 감시 대상이라(`06_Development_Roadmap.md` TASK-706), 손으로 편집하거나 삭제해도 수동 조작 없이 자동으로 반영된다. Settings는 그 파일이 든 폴더를 OS 파일 관리자로 여는 것뿐(Settings Window 대체, 위 참조). Reset Index는 아래 C5 참조.
 
   ⚠️ **수정 이력:**
   1. (2026-08-22) Reload를 처음엔 `AppHandle::restart()`(앱 전체 재시작)로 구현했다가, `npm run tauri dev`(개발 모드)에서 실제로 멈추는 문제가 있어 되돌렸다 — 개발 모드는 프론트엔드를 별도 vite 서버(`devUrl`)로 띄우는데, 앱 프로세스가 재시작으로 죽는 순간 `tauri dev`의 오케스트레이터가 dev 세션이 끝났다고 판단해 그 vite 서버와 터미널 세션까지 같이 정리해버린다. 대신 색인 워커 스레드에 컨트롤 채널(`IndexCommand::Reload`)을 둬서 `settings.json`을 다시 읽고 `watched_folders`만 그 스레드 안에서 적용하도록 바꿨다.
@@ -139,6 +139,21 @@ C1 레이아웃의 우측 패널. 별도 화면이 아니라 결과 리스트 �
 │                                    [색인 초기화]      │
 └───────────────────────────────────────────────────────┘
 ```
+
+⚠️ **결정 (2026-08-24) - 위 mockup 항목 전수 검토, `settings.json`에 반영:**
+
+| mockup 항목 | 처리 |
+|---|---|
+| 색인 대상 폴더 | 이미 반영됨 (`watched_folders`) |
+| 제외 패턴 | **이번에 추가** - `excluded_extensions`/`excluded_temp_patterns` (`Vec<String>`), 기존엔 `core::config::DEFAULT_EXCLUDED_EXTENSIONS`/`DEFAULT_TEMP_PATTERNS`가 고정 상수라 사용자가 바꿀 방법이 없었음. 손으로 편집한 값이 해당 상수 목록을 완전히 대체(병합 아님). 이미 갖고 있는 파일 감시/재적용 경로를 그대로 타므로 재스캔되는 파일부터 바로 적용됨. |
+| 색인 수행 시간대·리소스 상한 | **비노출 유지** - 열린 질문 #6에서 이미 결정됨 (TASK-306, 상시 스로틀링만 구현 범위) |
+| 전역 단축키 변경 | **이번에 추가** - `hotkey` (`String`), 기존 하드코딩 상수(`DEFAULT_HOTKEY`, 이제 `core::config`로 이동)를 대체. `settings.json` 변경 감지 시 `run()`이 넘긴 콜백(`on_settings_reload`)이 이전 값을 `unregister`하고 새 값을 `register_hotkey`로 재등록 - 재시작 불필요. |
+| 검색 결과 표시 개수 | **이번에 추가** - `result_limit` (`u32`). 기존엔 `frontend/src/main.ts`의 `RESULT_LIMIT` 상수였음. `get_result_limit` 커맨드로 노출, `theme`과 동일하게 페이지 로드+포커스 시점에 다시 읽음. **`0`은 무제한을 뜻하고, 기본값도 무제한(2026-08-24 결정)** - `core::search::SearchRequest::limit`이 `0`(또는 음수)을 SQLite의 "음수 `LIMIT`은 무제한" 관례로 정규화(`SqliteSearchService::search`). |
+| (mockup엔 없었지만 같은 검토에서 발견) 검색 입력 debounce 시간 | **이번에 추가** - `search_debounce_ms` (`u32`, 기본 150). 기존엔 `frontend/src/main.ts`의 `DEBOUNCE_MS` 상수였음. `get_search_debounce_ms` 커맨드로 노출, 나머지 프론트엔드 설정값과 동일한 방식으로 다시 읽음. |
+| (2026-08-24, 하드코딩 값 전체 재검토에서 발견) 색인 대상 폴더 파일 감시 debounce 시간 | **추가** - `file_watch_debounce_ms` (`u32`, 기본 3000). 기존엔 `src-tauri`에 고정값(`Duration::from_millis(3000)`)으로 박혀 있었음(`knowdesk-cli watch --debounce-ms`는 이미 플래그로 노출돼 있던 것과 대비됨). `core::index::watcher::FileWatcher::set_debounce`로 필드 값만 바꿔주면 되므로 워처 재생성 없이 즉시 적용됨. `settings.json` 파일 자체를 감시하는 별개의 워처(삭제 시 기본값 재생성용)의 debounce는 설정값으로 빼지 않고 내부 고정값 200ms 유지 - 사용자가 튜닝할 대상이 아니라는 판단(2026-08-24). |
+| 시작 시 자동 실행 | **이번 범위에서 제외** - 코드/의존성이 전혀 없는 새 기능(OS별 자동시작 연동, `tauri-plugin-autostart` 같은 새 의존성 필요)이라 사용자 확인 후 보류. |
+| 색인 DB 저장 위치 | **제외 유지** - `db_path`는 2026-08-24 이전 턴에서 이미 "환경변수(`KNOWDESK_DB_PATH`)/기본값으로만 결정, `settings.json`에는 절대 넣지 않는다"고 확정됨(`core::config::Config`의 `#[serde(skip)]`, `save_never_writes_db_path` 테스트). 이번 mockup 재검토로도 이 결정은 바꾸지 않음 - 다시 필요해지면 별도로 논의. |
+| 색인 초기화 | **트레이 메뉴 액션으로 추가** (값이 아니라 동작이라 `settings.json` 필드로는 표현 불가) - "Reset Index" 항목, 확인 다이얼로그(`tauri_plugin_dialog`, non-blocking `.show()` - TASK-704 데드락의 원인이었던 `blocking_*` API는 쓰지 않음) 후 `core::db::documents::DocumentRepository::reset_all`로 DB를 비우고 감시 중인 모든 폴더를 처음부터 다시 스캔. |
 
 ### 통계 & 진단 (TASK-901, TASK-902)
 

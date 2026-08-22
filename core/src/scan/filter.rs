@@ -1,6 +1,9 @@
-//! Default exclusion rules (`docs/01_KnowDesk_PRD.md` Chapter 3 "Default Exclusion Rules").
+//! Exclusion rules (`docs/01_KnowDesk_PRD.md` Chapter 3 "Default Exclusion Rules").
+//! The extension/temp-pattern lists themselves live on `Config` now
+//! (`excluded_extensions`/`excluded_temp_patterns`), user-configurable via
+//! `settings.json` - this module just applies whatever the current `Config` holds.
 
-use crate::config::{Config, DEFAULT_EXCLUDED_EXTENSIONS, DEFAULT_TEMP_PATTERNS};
+use crate::config::Config;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,15 +17,17 @@ pub enum SkipReason {
 pub fn check(path: &Path, file_size: u64, config: &Config) -> Option<SkipReason> {
     let filename = path.file_name()?.to_string_lossy().to_lowercase();
 
-    if DEFAULT_TEMP_PATTERNS
+    if config
+        .excluded_temp_patterns
         .iter()
-        .any(|pat| filename.starts_with(pat) || filename.ends_with(pat))
+        .any(|pat| filename.starts_with(pat.as_str()) || filename.ends_with(pat.as_str()))
     {
         return Some(SkipReason::TempFile);
     }
 
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        if DEFAULT_EXCLUDED_EXTENSIONS
+        if config
+            .excluded_extensions
             .iter()
             .any(|excluded| excluded.eq_ignore_ascii_case(ext))
         {

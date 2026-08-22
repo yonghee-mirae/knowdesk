@@ -20,17 +20,27 @@ pub struct SqliteSearchService<'a> {
 
 impl<'a> SearchServiceTrait for SqliteSearchService<'a> {
     fn search(&self, request: &SearchRequest) -> Result<SearchResult, SearchError> {
+        // `request.limit <= 0` means "no limit" (`SearchRequest::limit`'s doc
+        // comment) - normalized here, once, to SQLite's own convention (a
+        // negative `LIMIT` returns every row) so every query below just works
+        // without each one separately special-casing zero.
+        let limit = if request.limit <= 0 {
+            -1
+        } else {
+            request.limit
+        };
+
         let hits = match request.mode {
             SearchMode::Filename => {
                 let (needles, filters) = parse_filename(&request.query);
-                SearchRepository::search_filename(self.conn, &needles, &filters, request.limit)?
+                SearchRepository::search_filename(self.conn, &needles, &filters, limit)?
                     .into_iter()
                     .map(|row| to_hit(row, MatchKind::Exact))
                     .collect()
             }
             SearchMode::Content => {
                 let parsed = parse(&request.query);
-                self.search_content(&parsed, request.limit)?
+                self.search_content(&parsed, limit)?
             }
         };
 

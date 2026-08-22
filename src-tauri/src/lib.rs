@@ -3,6 +3,7 @@
 // `open_path`/`open_parent_folder` are the exception (native opener, no equivalent in `core`).
 
 use knowdesk_core::config::{Config, Theme};
+use knowdesk_core::db::documents::DocumentRepository;
 use knowdesk_core::db::Db;
 use knowdesk_core::extract::ooxml::{DocxExtractor, PptxExtractor};
 use knowdesk_core::extract::pdf::PdfExtractor;
@@ -28,18 +29,9 @@ use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WindowEvent};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
-
-/// Not yet user-changeable since there's no Settings Window (TASK-704 —
-/// replaced with a "설정 파일 폴더 열기" action, see `open_settings_folder`)
-/// to change it from. `CmdOrCtrl` resolves to `⌘+Option+K` on macOS,
-/// `Ctrl+Alt+K` on Windows/Linux.
-///
-/// ⚠️ O-7 (`KnowDesk_추가검토사항.md`) - whether global-hotkey hooking is
-/// allowed by IT security policy on the target Windows fleet - is still
-/// unconfirmed. This default is provisional pending that review.
-const DEFAULT_HOTKEY: &str = "CmdOrCtrl+Alt+K";
 
 /// A search request sent to the dedicated worker thread (see `SearchWorker`).
 struct SearchJob {
@@ -252,6 +244,26 @@ fn get_theme() -> Result<Theme, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Reads the current `result_limit` setting - same "read on load + window
+/// focus" pattern as `get_theme` above (see its doc comment): a search-result
+/// count only needs to apply to the *next* search issued, so there's no need
+/// for a live-push mechanism either.
+#[tauri::command]
+fn get_result_limit() -> Result<u32, String> {
+    Config::load(Some(&settings_path()))
+        .map(|config| config.result_limit)
+        .map_err(|e| e.to_string())
+}
+
+/// Reads the current `search_debounce_ms` setting - same "read on load +
+/// window focus" pattern as `get_theme`/`get_result_limit` above.
+#[tauri::command]
+fn get_search_debounce_ms() -> Result<u32, String> {
+    Config::load(Some(&settings_path()))
+        .map(|config| config.search_debounce_ms)
+        .map_err(|e| e.to_string())
+}
+
 /// Shows the "search" window (pre-created hidden at startup, `tauri.conf.json`'s
 /// `visible: false`) and gives it keyboard focus, or hides it again if it's
 /// already visible (Spotlight/PowerToys Run convention -
@@ -269,6 +281,25 @@ fn toggle_search_window(app: &AppHandle) {
     }
 }
 
+/// Registers `hotkey` (`tauri-plugin-global-shortcut` string syntax, e.g.
+/// `"CmdOrCtrl+Alt+K"`) to toggle the search window - shared by `run()`'s
+/// initial registration and by live-reload when `settings.json`'s `hotkey`
+/// field changes (see the `on_settings_reload` closure passed to
+/// `spawn_index_worker` below). Registering an already-registered shortcut,
+/// or one that fails to parse, returns an `Err` for the caller to log -
+/// neither case should crash the app.
+fn register_hotkey(
+    app: &AppHandle,
+    hotkey: &str,
+) -> Result<(), tauri_plugin_global_shortcut::Error> {
+    app.global_shortcut()
+        .on_shortcut(hotkey, |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                toggle_search_window(app);
+            }
+        })
+}
+
 fn default_extractors() -> Vec<Box<dyn ContentExtractor>> {
     vec![
         Box::new(TxtExtractor),
@@ -283,9 +314,25 @@ fn default_extractors() -> Vec<Box<dyn ContentExtractor>> {
 /// folder list (the common case until folders are added to `settings.json`),
 /// since the thread just idles otherwise, ready for folders to show up via a
 /// later hand-edit of the settings file (see `run_index_worker`).
-fn spawn_index_worker(db_path: PathBuf, settings_path: PathBuf, config: Config) {
+///
+/// `on_settings_reload` is called (with the just-replaced config and the one
+/// now in effect) every time `settings.json` is successfully reloaded - `run()`
+/// passes a closure that re-registers the global hotkey when it changes. Kept
+/// as an injected callback rather than reaching for `AppHandle` directly in
+/// `run_index_worker`, so that function (and its test,
+/// `index_worker_applies_settings_file_changes_live`) stays free of any Tauri
+/// runtime dependency - no mock app needed to call it.
+fn spawn_index_worker(
+    db_path: PathBuf,
+    settings_path: PathBuf,
+    config: Config,
+    reset_rx: mpsc::Receiver<()>,
+    on_settings_reload: impl Fn(&Config, &Config) + Send + 'static,
+) {
     thread::spawn(move || {
-        if let Err(e) = run_index_worker(db_path, settings_path, config) {
+        if let Err(e) =
+            run_index_worker(db_path, settings_path, config, reset_rx, on_settings_reload)
+        {
             eprintln!("Index worker failed: {e}");
         }
     });
@@ -315,11 +362,14 @@ fn reload_settings(settings_path: &Path, fallback: &Config) -> Config {
 /// process's lifetime, and applies hand-edits to `settings.json` itself
 /// automatically - no separate "reload"/"apply" action needed, since file
 /// watching already exists for indexed folders and the settings file is just
-/// one more file to apply the same idea to.
+/// one more file to apply the same idea to. Also watches `reset_rx` for a
+/// "Reset Index" trigger from the tray menu.
 fn run_index_worker(
     db_path: PathBuf,
     settings_path: PathBuf,
     initial_config: Config,
+    reset_rx: mpsc::Receiver<()>,
+    on_settings_reload: impl Fn(&Config, &Config),
 ) -> Result<(), Box<dyn std::error::Error>> {
     let db = Db::open(&db_path)?;
     let extractors = default_extractors();
@@ -327,10 +377,12 @@ fn run_index_worker(
     let mut kiwi: Option<KiwiTokenizer> = None;
     let mut watched: Vec<PathBuf> = Vec::new();
     let mut config = initial_config;
-    // Same debounce as `knowdesk-cli watch`'s default (`cli/src/main.rs`).
     // Starts with no roots - `apply_folder_diff` below adds whatever
     // `initial_config` lists.
-    let mut folder_watcher = FileWatcher::new::<PathBuf>(&[], Duration::from_millis(3000))?;
+    let mut folder_watcher = FileWatcher::new::<PathBuf>(
+        &[],
+        Duration::from_millis(config.file_watch_debounce_ms.into()),
+    )?;
     apply_folder_diff(
         &db,
         &extractors,
@@ -344,7 +396,13 @@ fn run_index_worker(
     // Watches `settings.json`'s own folder (not the file directly - `notify`
     // watches on some platforms don't survive the file being deleted and
     // recreated, which is exactly the "삭제 시 기본값으로 재생성" case this
-    // needs to catch) so a hand-edit or delete applies on its own.
+    // needs to catch) so a hand-edit or delete applies on its own. Fixed
+    // internal value, not a `Config` field like `file_watch_debounce_ms` -
+    // this is internal live-reload plumbing, not a user-facing concern.
+    // Short (200ms, vs. the indexed-folder watcher's much longer default)
+    // since a hand-edited settings file has no equivalent to the
+    // "still-saving/temp-file" concern that debounce protects against there.
+    const SETTINGS_WATCH_DEBOUNCE_MS: u64 = 200;
     let settings_filename = settings_path
         .file_name()
         .ok_or("settings path has no file name")?
@@ -352,7 +410,10 @@ fn run_index_worker(
     let settings_dir = settings_path
         .parent()
         .ok_or("settings path has no parent directory")?;
-    let settings_watcher = FileWatcher::new(&[settings_dir], Duration::from_millis(3000))?;
+    let settings_watcher = FileWatcher::new(
+        &[settings_dir],
+        Duration::from_millis(SETTINGS_WATCH_DEBOUNCE_MS),
+    )?;
 
     loop {
         // Settings changes first: an added/removed folder should be picked
@@ -362,7 +423,13 @@ fn run_index_worker(
                 .iter()
                 .any(|p| p.file_name() == Some(settings_filename.as_os_str()))
             {
+                let previous = config.clone();
                 config = reload_settings(&settings_path, &config);
+                on_settings_reload(&previous, &config);
+                if config.file_watch_debounce_ms != previous.file_watch_debounce_ms {
+                    folder_watcher
+                        .set_debounce(Duration::from_millis(config.file_watch_debounce_ms.into()));
+                }
                 apply_folder_diff(
                     &db,
                     &extractors,
@@ -375,17 +442,61 @@ fn run_index_worker(
             }
         }
 
+        // "Reset Index" (tray menu, confirmed by the user before this fires):
+        // wipe the DB, then re-scan every currently watched folder from
+        // scratch. Unwatching first and clearing `watched` makes
+        // `apply_folder_diff` treat every folder as newly added, reusing the
+        // same scan/watch path a first-time folder add already goes through.
+        if reset_rx.try_recv().is_ok() {
+            eprintln!("Resetting index (Reset Index requested from tray)");
+            match DocumentRepository::reset_all(&db.conn) {
+                Ok(()) => {
+                    for folder in &watched {
+                        if let Err(e) = folder_watcher.unwatch(folder) {
+                            eprintln!("Failed to unwatch {}: {e}", folder.display());
+                        }
+                    }
+                    watched.clear();
+                    apply_folder_diff(
+                        &db,
+                        &extractors,
+                        &bigram,
+                        &mut kiwi,
+                        &mut folder_watcher,
+                        &mut watched,
+                        &config,
+                    );
+                }
+                Err(e) => eprintln!("Failed to reset index: {e}"),
+            }
+        }
+
         if let Some(events) = folder_watcher.recv_timeout(Duration::from_millis(300)) {
-            let pipeline = IndexPipeline {
-                conn: &db.conn,
-                config: &config,
-                extractors: &extractors,
-                bigram: &bigram,
-                kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
-            };
-            for (path, result) in queue::drain(&pipeline, events) {
-                if let Err(e) = result {
-                    eprintln!("{}: index error: {e}", path.display());
+            // A path can still surface here for a folder that was *just*
+            // unwatched (settings-triggered removal, or the unwatch half of
+            // "Reset Index") - `notify`'s OS-level backend may have already
+            // captured the event before the `unwatch()` call above took
+            // effect, and once buffered, unwatching doesn't retroactively
+            // discard it. Filtering against the current `watched` list (the
+            // one `apply_folder_diff` just finished updating) is what
+            // actually stops it from being indexed, rather than relying on
+            // timing to keep the two from overlapping.
+            let events: Vec<PathBuf> = events
+                .into_iter()
+                .filter(|path| watched.iter().any(|folder| path.starts_with(folder)))
+                .collect();
+            if !events.is_empty() {
+                let pipeline = IndexPipeline {
+                    conn: &db.conn,
+                    config: &config,
+                    extractors: &extractors,
+                    bigram: &bigram,
+                    kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
+                };
+                for (path, result) in queue::drain(&pipeline, events) {
+                    if let Err(e) = result {
+                        eprintln!("{}: index error: {e}", path.display());
+                    }
                 }
             }
         }
@@ -485,13 +596,18 @@ pub fn run() {
     // Once the file/schema/WAL mode already exist, later connections opening
     // concurrently no longer hit this.
     Db::open(&db_path).expect("failed to open index DB");
-    spawn_index_worker(db_path.clone(), settings_path, config);
-    let worker = SearchWorker::spawn(db_path);
+    let worker = SearchWorker::spawn(db_path.clone());
+    // "Reset Index" (tray menu) is sent over this channel rather than acted on
+    // directly in the menu-event handler, since the DB connection it needs to
+    // wipe belongs to the index worker thread, not the UI thread the tray
+    // callback runs on.
+    let (reset_tx, reset_rx) = mpsc::channel::<()>();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(worker)
         .invoke_handler(tauri::generate_handler![
             search,
@@ -499,8 +615,41 @@ pub fn run() {
             open_parent_folder,
             open_settings_folder,
             get_theme,
+            get_result_limit,
+            get_search_debounce_ms,
         ])
-        .setup(|app| {
+        .setup(move |app| {
+            let app_handle = app.handle().clone();
+
+            // Spawned here (not before `tauri::Builder::default()` above, as
+            // originally written) because live hotkey reload needs an
+            // `AppHandle`, which doesn't exist until now.
+            let hotkey_app = app_handle.clone();
+            spawn_index_worker(
+                db_path,
+                settings_path,
+                config.clone(),
+                reset_rx,
+                move |previous, current| {
+                    if current.hotkey != previous.hotkey {
+                        if let Err(e) = hotkey_app.global_shortcut().unregister(previous.hotkey.as_str())
+                        {
+                            eprintln!("Failed to unregister old hotkey {}: {e}", previous.hotkey);
+                        }
+                        match register_hotkey(&hotkey_app, &current.hotkey) {
+                            Ok(()) => eprintln!(
+                                "Hotkey changed: {} -> {}",
+                                previous.hotkey, current.hotkey
+                            ),
+                            Err(e) => eprintln!(
+                                "Failed to register new hotkey {}: {e}",
+                                current.hotkey
+                            ),
+                        }
+                    }
+                },
+            );
+
             // The tray is the only thing keeping the app around once the
             // window is hidden, so its OS-level close request (e.g. Alt+F4)
             // must hide the window instead of destroying it - same intent as
@@ -520,11 +669,25 @@ pub fn run() {
             // (Korean), this menu's wording was explicitly specified in English.
             // No separate "Reload" item - settings.json is now watched like any
             // other indexed folder (`run_index_worker`), so edits (and deletes,
-            // which recreate it with defaults) apply on their own.
+            // which recreate it with defaults) apply on their own. "Reset Index"
+            // gets its own separators on both sides - it's destructive
+            // (wipes the whole DB), unlike "Settings"/"Quit".
             let settings_item = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
-            let separator = PredefinedMenuItem::separator(app)?;
+            let separator_1 = PredefinedMenuItem::separator(app)?;
+            let reset_index_item =
+                MenuItem::with_id(app, "reset_index", "Reset Index", true, None::<&str>)?;
+            let separator_2 = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(app, &[&settings_item, &separator, &quit_item])?;
+            let tray_menu = Menu::with_items(
+                app,
+                &[
+                    &settings_item,
+                    &separator_1,
+                    &reset_index_item,
+                    &separator_2,
+                    &quit_item,
+                ],
+            )?;
 
             let tray_icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
             TrayIconBuilder::new()
@@ -535,9 +698,33 @@ pub fn run() {
                 // window); only right click opens the menu
                 // (`docs/12_UI_Spec.md` C4: 좌클릭=토글, 우클릭=메뉴).
                 .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id().as_ref() {
+                .on_menu_event(move |app, event| match event.id().as_ref() {
                     "settings" => {
                         let _ = open_settings_folder(app.clone());
+                    }
+                    "reset_index" => {
+                        let reset_tx = reset_tx.clone();
+                        // Destructive and irreversible (wipes every indexed
+                        // document) - confirmed with a native dialog before
+                        // doing anything. Uses the non-blocking `.show()`
+                        // callback form, never a `blocking_*` one - see the
+                        // `tauri-plugin-dialog` dependency comment for why
+                        // that distinction matters here.
+                        app.dialog()
+                            .message(
+                                "This deletes the entire search index and re-scans every watched folder from scratch. This cannot be undone.",
+                            )
+                            .title("Reset Index")
+                            .kind(MessageDialogKind::Warning)
+                            .buttons(MessageDialogButtons::OkCancelCustom(
+                                "Reset".to_string(),
+                                "Cancel".to_string(),
+                            ))
+                            .show(move |confirmed| {
+                                if confirmed {
+                                    let _ = reset_tx.send(());
+                                }
+                            });
                     }
                     "quit" => app.exit(0),
                     _ => {}
@@ -558,12 +745,7 @@ pub fn run() {
             // plugin builder's `.with_shortcut()` - that runs before the app
             // handle exists, so a parse failure there can't surface through
             // the normal `?` error path the way it can here.
-            app.global_shortcut()
-                .on_shortcut(DEFAULT_HOTKEY, |app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        toggle_search_window(app);
-                    }
-                })?;
+            register_hotkey(&app_handle, &config.hotkey)?;
 
             Ok(())
         })
@@ -575,10 +757,25 @@ pub fn run() {
 mod tests {
     use super::*;
     use knowdesk_core::config::Config;
+    use knowdesk_core::db::documents::{
+        DocumentRecord, DocumentRepository, IndexStatus, IndexTier,
+    };
     use knowdesk_core::extract::txt::TxtExtractor;
     use knowdesk_core::extract::ContentExtractor;
     use knowdesk_core::index::pipeline::IndexPipeline;
     use knowdesk_core::nlp::bigram::BigramTokenizer;
+
+    /// Serializes the tests that spawn `run_index_worker`, which creates real
+    /// `notify` file watchers - confirmed in practice that two such watchers
+    /// running concurrently (the default when `cargo test` runs tests in
+    /// parallel) can starve each other's FSEvents callback delivery on macOS,
+    /// making both tests flaky for reasons that have nothing to do with the
+    /// code under test (same root cause as the fixed-sleep-over-tight-polling
+    /// note on `index_worker_applies_settings_file_changes_live` below - this
+    /// closes the other half of the gap, now that there's more than one such
+    /// test). `search_worker_finds_indexed_document` doesn't create a file
+    /// watcher, so it's unaffected and stays unguarded.
+    static INDEX_WORKER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// End-to-end check of the `SearchWorker` channel plumbing (the part unit
     /// tests can't reach through `#[tauri::command]` alone): index a real file
@@ -643,6 +840,9 @@ mod tests {
     /// 3s debounce.
     #[test]
     fn index_worker_applies_settings_file_changes_live() {
+        let _guard = INDEX_WORKER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
         let settings_path = dir.path().join("settings.json");
@@ -661,7 +861,14 @@ mod tests {
         // Same WAL-init race avoidance as `run()` (`Db::open` before spawning
         // any worker that opens its own connection).
         Db::open(&db_path).unwrap();
-        spawn_index_worker(db_path.clone(), settings_path.clone(), config);
+        let (_reset_tx, reset_rx) = mpsc::channel();
+        spawn_index_worker(
+            db_path.clone(),
+            settings_path.clone(),
+            config,
+            reset_rx,
+            |_, _| {},
+        );
 
         std::thread::sleep(std::time::Duration::from_secs(2));
         let search_db = Db::open(&db_path).unwrap();
@@ -706,6 +913,79 @@ mod tests {
         assert!(
             !search_finds(&search_db, "고유표시자12345"),
             "a folder must stop being watched once settings.json resets to defaults"
+        );
+    }
+
+    /// End-to-end check of the "Reset Index" tray action's channel-driven
+    /// trigger: a signal on `reset_rx` must wipe the DB and re-scan every
+    /// watched folder from scratch. Planting a document with no backing file
+    /// before the trigger fires distinguishes an actual wipe from the rescan
+    /// simply re-upserting the same real documents it would have anyway.
+    #[test]
+    fn index_worker_resets_on_reset_channel_trigger() {
+        let _guard = INDEX_WORKER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let settings_path = dir.path().join("settings.json");
+        let watched = dir.path().join("watched");
+        std::fs::create_dir_all(&watched).unwrap();
+        std::fs::write(watched.join("규정.txt"), "채권 발행 절차를 규정한다.").unwrap();
+
+        let config = Config {
+            watched_folders: vec![watched.clone()],
+            ..Config::default()
+        };
+        config.save(&settings_path).unwrap();
+
+        let db = Db::open(&db_path).unwrap();
+        DocumentRepository::upsert_document(
+            &db.conn,
+            &DocumentRecord {
+                document_id: "orphan".to_string(),
+                file_size: 1,
+                text_bytes: 1,
+                index_tier: IndexTier::Meta,
+                index_status: IndexStatus::MetaIndexed,
+                demotion_reason: None,
+            },
+        )
+        .unwrap();
+        drop(db);
+
+        let (reset_tx, reset_rx) = mpsc::channel();
+        spawn_index_worker(
+            db_path.clone(),
+            settings_path.clone(),
+            config,
+            reset_rx,
+            |_, _| {},
+        );
+
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let check_db = Db::open(&db_path).unwrap();
+        assert!(
+            search_finds(&check_db, "채권"),
+            "initial scan did not index the watched folder"
+        );
+        assert!(
+            DocumentRepository::exists(&check_db.conn, "orphan").unwrap(),
+            "orphan document should still be present before reset"
+        );
+        drop(check_db);
+
+        reset_tx.send(()).unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        let check_db = Db::open(&db_path).unwrap();
+        assert!(
+            !DocumentRepository::exists(&check_db.conn, "orphan").unwrap(),
+            "Reset Index did not wipe the previous index"
+        );
+        assert!(
+            search_finds(&check_db, "채권"),
+            "Reset Index did not re-scan the watched folder"
         );
     }
 }

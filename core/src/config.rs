@@ -4,10 +4,33 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Default exclusion rules (see PRD Chapter 3 "Default Exclusion Rules")
+/// Default exclusion rules (see PRD Chapter 3 "Default Exclusion Rules") - the
+/// starting values for `Config::excluded_extensions`/`excluded_temp_patterns`,
+/// not fixed rules `core/src/scan/filter.rs` applies on its own anymore. A
+/// hand-edited `settings.json` can freely add to or replace either list.
 pub const DEFAULT_MAX_FILE_SIZE_MB: u64 = 50;
 pub const DEFAULT_EXCLUDED_EXTENSIONS: &[&str] = &["zip", "7z", "rar"];
 pub const DEFAULT_TEMP_PATTERNS: &[&str] = &["~$", ".tmp", ".temp", ".cache"];
+/// `CmdOrCtrl` resolves to `⌘+Option+K` on macOS, `Ctrl+Alt+K` on Windows/Linux
+/// (`src-tauri`'s `register_hotkey` parses this string).
+///
+/// ⚠️ O-7 (`KnowDesk_추가검토사항.md`) - whether global-hotkey hooking is
+/// allowed by IT security policy on the target Windows fleet - is still
+/// unconfirmed. This default is provisional pending that review.
+pub const DEFAULT_HOTKEY: &str = "CmdOrCtrl+Alt+K";
+/// Number of hits shown per search (`frontend/src/main.ts`'s search call).
+/// `0` means unlimited (`core::search::SearchRequest::limit`'s doc comment) -
+/// the default is unlimited.
+pub const DEFAULT_RESULT_LIMIT: u32 = 0;
+/// Delay after the last keystroke before a search actually fires
+/// (`frontend/src/main.ts`'s `scheduleSearch`).
+pub const DEFAULT_SEARCH_DEBOUNCE_MS: u32 = 150;
+/// Quiet period after the last file-system event before a change to a watched
+/// folder is treated as settled and actually indexed
+/// (`core::index::watcher::FileWatcher`'s `debounce`). Same value
+/// `knowdesk-cli`'s `watch` subcommand already uses as its `--debounce-ms`
+/// default.
+pub const DEFAULT_FILE_WATCH_DEBOUNCE_MS: u32 = 3000;
 
 /// UI color theme (`frontend/src/core/theme.ts` applies it) - a plain data
 /// value, not a UI concept `core` needs to know the meaning of. `System`
@@ -40,6 +63,31 @@ pub struct Config {
     /// nothing is indexed until at least one folder is listed here.
     pub watched_folders: Vec<PathBuf>,
     pub theme: Theme,
+    /// File extensions to skip during indexing (case-insensitive, no leading
+    /// dot - e.g. `"zip"`). Defaults to `DEFAULT_EXCLUDED_EXTENSIONS`; a
+    /// hand-edited `settings.json` fully replaces this list, it doesn't merge
+    /// with the default.
+    pub excluded_extensions: Vec<String>,
+    /// Filename prefixes/suffixes to skip during indexing (e.g. `"~$"` for Office
+    /// lock files, `".tmp"`). Defaults to `DEFAULT_TEMP_PATTERNS`, same
+    /// replace-not-merge behavior as `excluded_extensions`.
+    pub excluded_temp_patterns: Vec<String>,
+    /// Global show/hide hotkey, in `tauri-plugin-global-shortcut`'s string
+    /// syntax (`src-tauri`'s `register_hotkey`). Applied live - changing this
+    /// and saving re-registers the hotkey without restarting the app.
+    pub hotkey: String,
+    /// Number of hits shown per search. `0` means unlimited.
+    pub result_limit: u32,
+    /// Delay (ms) after the last keystroke before a search actually fires.
+    pub search_debounce_ms: u32,
+    /// Quiet period (ms) after the last file-system event before a change to
+    /// a watched folder is indexed. Applied live - changing this and saving
+    /// takes effect on the very next settle, no restart needed
+    /// (`core::index::watcher::FileWatcher::set_debounce`). Only the watcher
+    /// for `watched_folders` uses this - the separate one that watches
+    /// `settings.json` itself (so edits/deletes apply automatically) stays
+    /// fixed, since tuning that one isn't a user-facing concern.
+    pub file_watch_debounce_ms: u32,
 }
 
 impl Default for Config {
@@ -49,6 +97,18 @@ impl Default for Config {
             max_file_size_mb: DEFAULT_MAX_FILE_SIZE_MB,
             watched_folders: Vec::new(),
             theme: Theme::default(),
+            excluded_extensions: DEFAULT_EXCLUDED_EXTENSIONS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            excluded_temp_patterns: DEFAULT_TEMP_PATTERNS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            hotkey: DEFAULT_HOTKEY.to_string(),
+            result_limit: DEFAULT_RESULT_LIMIT,
+            search_debounce_ms: DEFAULT_SEARCH_DEBOUNCE_MS,
+            file_watch_debounce_ms: DEFAULT_FILE_WATCH_DEBOUNCE_MS,
         }
     }
 }
@@ -168,6 +228,69 @@ mod tests {
 
         let reloaded = Config::load(Some(&path)).unwrap();
         assert_eq!(reloaded.theme, Theme::Dark);
+    }
+
+    #[test]
+    fn excluded_extensions_and_temp_patterns_default_and_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+
+        assert_eq!(
+            Config::default().excluded_extensions,
+            vec!["zip".to_string(), "7z".to_string(), "rar".to_string()]
+        );
+        assert_eq!(
+            Config::default().excluded_temp_patterns,
+            vec![
+                "~$".to_string(),
+                ".tmp".to_string(),
+                ".temp".to_string(),
+                ".cache".to_string()
+            ]
+        );
+
+        let config = Config {
+            excluded_extensions: vec!["bak".to_string()],
+            excluded_temp_patterns: vec!["~".to_string()],
+            ..Config::default()
+        };
+        config.save(&path).unwrap();
+
+        let reloaded = Config::load(Some(&path)).unwrap();
+        assert_eq!(reloaded.excluded_extensions, vec!["bak".to_string()]);
+        assert_eq!(reloaded.excluded_temp_patterns, vec!["~".to_string()]);
+    }
+
+    #[test]
+    fn hotkey_and_result_limit_default_and_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+
+        assert_eq!(Config::default().hotkey, DEFAULT_HOTKEY);
+        assert_eq!(Config::default().result_limit, DEFAULT_RESULT_LIMIT);
+        assert_eq!(
+            Config::default().search_debounce_ms,
+            DEFAULT_SEARCH_DEBOUNCE_MS
+        );
+        assert_eq!(
+            Config::default().file_watch_debounce_ms,
+            DEFAULT_FILE_WATCH_DEBOUNCE_MS
+        );
+
+        let config = Config {
+            hotkey: "CmdOrCtrl+Shift+Space".to_string(),
+            result_limit: 50,
+            search_debounce_ms: 300,
+            file_watch_debounce_ms: 1000,
+            ..Config::default()
+        };
+        config.save(&path).unwrap();
+
+        let reloaded = Config::load(Some(&path)).unwrap();
+        assert_eq!(reloaded.hotkey, "CmdOrCtrl+Shift+Space");
+        assert_eq!(reloaded.result_limit, 50);
+        assert_eq!(reloaded.search_debounce_ms, 300);
+        assert_eq!(reloaded.file_watch_debounce_ms, 1000);
     }
 
     #[test]

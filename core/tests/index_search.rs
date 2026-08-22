@@ -65,6 +65,75 @@ fn indexes_sample_folder_and_finds_snippet() {
     assert!(hit.modified_at.is_some());
 }
 
+/// `SearchRequest::limit == 0` means "no limit" (its doc comment) - confirmed
+/// against a dataset bigger than any ordinary positive limit, contrasted with
+/// a small positive limit that really does cap the result count. Covers
+/// content mode specifically since that's the path with the extra
+/// overfetch-then-dedupe arithmetic (`SearchRepository::search_content`'s
+/// `limit.saturating_mul(5).max(limit)`, `dedupe_by_document_id`'s
+/// `.take(limit as usize)`) that a `0`/`-1` value has to flow through
+/// correctly, not just the plain `LIMIT ?` clauses.
+#[test]
+fn zero_limit_means_unlimited_results() {
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..5 {
+        // Distinct content per file - documents are content-addressed
+        // (`document_id = SHA256(content)`), so identical bodies would
+        // collapse into a single document and undercount the hits this test
+        // is trying to distinguish (2 vs. all 5).
+        std::fs::write(
+            dir.path().join(format!("문서{i}.txt")),
+            format!("채권 발행 절차 {i}"),
+        )
+        .unwrap();
+    }
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let tokenizer = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &tokenizer,
+        kiwi: None,
+    };
+    let outcome = pipeline.index_directory(dir.path()).unwrap();
+    assert_eq!(outcome.full, 5);
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: None,
+    };
+
+    let capped = search
+        .search(&SearchRequest {
+            query: "채권".to_string(),
+            mode: SearchMode::Content,
+            limit: 2,
+        })
+        .unwrap();
+    assert_eq!(
+        capped.hits.len(),
+        2,
+        "a positive limit should still cap results"
+    );
+
+    let unlimited = search
+        .search(&SearchRequest {
+            query: "채권".to_string(),
+            mode: SearchMode::Content,
+            limit: 0,
+        })
+        .unwrap();
+    assert_eq!(
+        unlimited.hits.len(),
+        5,
+        "limit 0 should return every match, not zero"
+    );
+}
+
 #[test]
 fn grouping_parens_change_the_result_from_the_ungrouped_query() {
     // Real bug, confirmed against the actual FTS5 index: `sanitize_term` used to quote

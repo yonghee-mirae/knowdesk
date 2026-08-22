@@ -259,6 +259,8 @@ DRM 문서는 본문 색인을 포기하고 메타데이터만 색인하는 방�
 
 > **결정 (2026-08-22):** 설정 파일 형식·위치 — `settings.json`(JSON), 색인 DB(`knowdesk.db`)와 같은 폴더(OS별 로컬 앱데이터 디렉터리: Windows `%LOCALAPPDATA%\KnowDesk`, macOS `~/Library/Application Support/KnowDesk`, Linux `$XDG_DATA_HOME/KnowDesk`). DB·설정 둘 다 이 PC에서만 의미 있는 값(색인 대상 폴더 절대경로 등)이라 Windows Roaming(`%APPDATA%`) 같은 동기화 프로필 위치에는 두지 않기로 함. `core::config::Config`(`core/src/config.rs`)가 구조체·로딩을 담당, 실제 경로 결정은 `src-tauri::settings_path()`.
 
+> **진행 상황 (2026-08-24):** 위 8개 항목을 전수 재검토해 `Config`에 반영. 색인 대상 폴더는 이미 있었고, 제외 패턴·전역 단축키·검색 결과 표시 개수 3개를 이번에 새 필드로 추가(`excluded_extensions`/`excluded_temp_patterns`/`hotkey`/`result_limit`). 색인 수행 시간대·리소스 상한은 기존 비노출 결정 유지(`12_UI_Spec.md` 열린 질문 #6). 색인 DB 저장 위치는 `db_path`를 `settings.json`에 넣지 않기로 한 기존 결정을 그대로 유지(재론하지 않음). 시작 시 자동 실행은 새 의존성이 필요한 별도 기능이라 이번 범위에서 보류. 색인 초기화는 값이 아니라 동작이라 설정 필드가 아닌 트레이 메뉴 액션("Reset Index")으로 구현 — 자세한 내용은 `12_UI_Spec.md` C5, `07_Coding_Agent_Backlog.md` TASK-704/TASK-801/TASK-802 참조.
+
 ## E-2. 온보딩 첫 경험
 
 설치 직후는 초기 색인이 완료되기 전이므로 검색이 사실상 동작하지 않는다. 제품 이탈이 가장 많이 발생하는 구간이다.

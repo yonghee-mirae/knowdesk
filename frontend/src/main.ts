@@ -13,10 +13,16 @@ import type { KdPreview } from './components/kd-preview';
 import type { SearchHit, SearchMode } from './types';
 
 void loadAndApplyTheme();
+void loadResultLimit();
+void loadSearchDebounceMs();
 // Re-checks on every focus (shown via the tray/hotkey) - see
 // `loadAndApplyTheme`'s doc comment for why that's needed instead of a
-// push-based update.
-window.addEventListener('focus', () => void loadAndApplyTheme());
+// push-based update. Same reasoning applies to `resultLimit`/`searchDebounceMs`.
+window.addEventListener('focus', () => {
+  void loadAndApplyTheme();
+  void loadResultLimit();
+  void loadSearchDebounceMs();
+});
 
 // The footer hint bar's "폴더 열기"/"경로 복사" shortcuts are hardcoded as
 // "Ctrl" in index.html - swap to "⌘" on macOS to match the actual modifier
@@ -25,8 +31,32 @@ document.querySelectorAll('.kd-footer kbd').forEach((el) => {
   if (el.textContent === 'Ctrl') el.textContent = MOD_KEY;
 });
 
-const RESULT_LIMIT = 20;
-const DEBOUNCE_MS = 150;
+// Fallbacks until each loader's first read resolves - match the backend's own
+// defaults (`core::config::DEFAULT_RESULT_LIMIT`/`DEFAULT_SEARCH_DEBOUNCE_MS`).
+// `0` means unlimited, same convention as the backend field.
+let resultLimit = 0;
+let debounceMs = 150;
+
+/** Reads `result_limit` from `settings.json` (via the backend). Best-effort -
+ * an unreadable/corrupt settings.json shouldn't block search, just keeps
+ * whatever value was already in effect. */
+async function loadResultLimit(): Promise<void> {
+  try {
+    resultLimit = await backend.getResultLimit();
+  } catch {
+    // Keep the previous value.
+  }
+}
+
+/** Reads `search_debounce_ms` from `settings.json` (via the backend).
+ * Best-effort, same reasoning as `loadResultLimit`. */
+async function loadSearchDebounceMs(): Promise<void> {
+  try {
+    debounceMs = await backend.getSearchDebounceMs();
+  } catch {
+    // Keep the previous value.
+  }
+}
 
 const maybeBody = document.querySelector<HTMLDivElement>('#body');
 const maybeSearchBar = document.querySelector<KdSearchBar>('kd-search-bar');
@@ -81,7 +111,7 @@ async function runSearch(): Promise<void> {
     return;
   }
 
-  const hits = await backend.search(query, state.mode, RESULT_LIMIT);
+  const hits = await backend.search(query, state.mode, resultLimit);
   if (seq !== searchSeq) return; // A newer search has since started - discard this one.
 
   state.hits = hits;
@@ -115,7 +145,7 @@ function scheduleSearch(): void {
   debounceHandle = setTimeout(() => {
     debounceHandle = null;
     launchSearch();
-  }, DEBOUNCE_MS);
+  }, debounceMs);
 }
 
 // Arrow-key/Enter/Ctrl+C handling reads `state.hits`/`state.selected` right

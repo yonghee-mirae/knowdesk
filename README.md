@@ -67,9 +67,9 @@ cargo run -p knowdesk-cli -- --db ./samples.db search "짓"    # 어간 — 색�
 cargo run -p knowdesk-cli -- --db ./samples.db search "짓다"  # 사전형 — 검색어 형태소 분석(확장) 확인
 ```
 
-Kiwi가 실제로 동작 중이면 둘 다 `공사보고서.txt`를 찾는다 — "짓"은 `morph_kiwi`에 이미 그대로 있는 토큰이라 `[exact match]`, "짓다"는 검색어 확장을 거쳐야 찾아지므로 `[morphological match]`가 붙는다. `KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`가 없어 bigram만 쓴다면 둘 다 `No results`다.
+Kiwi가 실제로 동작 중이면 둘 다 `공사보고서.txt`를 찾고, 둘 다 `[morphological match]`가 붙는다 — "지었다"(지/었/다)는 "짓"이라는 글자를 원문 어디에도 포함하지 않으므로, 검색어가 "짓"이든("짓다"를 거치지 않고 이미 어간 그대로 입력) "짓다"든(검색어 확장을 거쳐 어간 "짓"이 됨) 결국 Kiwi의 형태소 분석(색인 시점이든 검색어 확장 시점이든)이 있어야만 찾아지는 건 마찬가지다. `KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`가 없어 bigram만 쓴다면 둘 다 `No results`다.
 
-검색 결과에는 각 히트가 어떻게 걸렸는지 태그가 붙는다: 리터럴(body/bigram) 그대로 걸렸으면 `[exact match]`, Kiwi 검색어 확장으로만 걸렸으면 `[morphological match]`. 예를 들어 `search "채권 발행"`은 `[exact match]`가 나오는지 확인해보면 된다 — 평범한 검색어는 확장 기능이 있어도 동작이 그대로여야 한다.
+검색 결과에는 각 히트가 어떻게 걸렸는지 태그가 붙는다: 원문에 검색어(또는 형태소 분석이 찾아낸 어간)가 문자 그대로 존재하면 `[exact match]`, 원문에 없고 Kiwi의 형태소 분석으로만 찾아졌으면(불규칙 활용 등으로 표면형이 아예 다른 경우) `[morphological match]`. 예를 들어 `search "채권 발행"`은 원문에 "채권"과 "발행"이 그대로 있으므로 `[exact match]`가 나오는지 확인해보면 된다 — 평범한 검색어는 확장 기능이 있어도 동작이 그대로여야 한다. (`[exact match]`/`[morphological match]` 판정은 검색어가 확장됐는지가 아니라, 실제로 원문에 문자 그대로 있는지로 결정된다 — 2026-08-22 수정. 예전엔 "짓"처럼 확장이 필요 없는 검색어는 무조건 `[exact match]`로 잘못 표시됐다.)
 
 ### CLI 서브커맨드
 
@@ -92,3 +92,29 @@ rm ./samples/새문서.txt                # 잠시 후 색인에서도 사라짐
 검색 필터는 `docs/05_Search_Language_v1.md` 문법을 그대로 따른다: `x:pdf`, `p:리서치`, `m>2026-01-01`, `m<2026-08-01`, `m=2026-08-10` 등을 검색어에 함께 넣으면 된다.
 
 `--db` 옵션 없이 실행하면 현재 디렉터리에 `knowdesk.db`가 생성되므로, 테스트할 땐 `--db` 경로를 지정해 격리하는 걸 권장한다.
+
+---
+
+## Phase C — 실제 UI (Tauri)
+
+`src-tauri/` + `frontend/`가 Phase C의 실제 검색창 구현이다(`docs/12_UI_Spec.md` C1 검색창 + 결과 리스트 + 프리뷰). 브라우저 프로토타입(`docs/06_Development_Roadmap.md` Phase C 착수 전 만든 목업)에서 검증한 상호작용을 실제 `knowdesk-core` 검색과 연결한 것이다.
+
+```bash
+npm install
+npm --prefix frontend install
+
+# CLI로 이미 색인해 둔 DB를 그대로 붙여서 확인하려면 KNOWDESK_DB_PATH 지정
+# (없으면 OS별 앱 데이터 폴더의 knowdesk.db를 새로 만든다 — 아직 비어 있음, 폴더 색인 트리거는 TASK-704 이후 범위)
+# 반드시 절대경로로 지정할 것 — `tauri dev`가 내부적으로 src-tauri/를 작업 디렉터리로 두고
+# 실행하므로, 여기서 상대경로(./samples.db)를 쓰면 저장소 루트가 아니라
+# src-tauri/samples.db라는 새 빈 DB가 조용히 생성된다 (검색 결과 0건으로만 나타나고 에러는 없음).
+KNOWDESK_DB_PATH="$(pwd)/samples.db" npm run tauri dev
+```
+
+키보드: `↑`/`↓` 이동, `Enter` 열기, `Ctrl+Enter` 폴더 열기, `Ctrl+C` 경로 복사, `Ctrl+Tab`/`Ctrl+1`/`Ctrl+2` 내용·파일명 모드 전환, `Esc` 창 숨김.
+
+프로토타입에서 확정된 요소 중 실제 UI에 반영된 것: 검색 문법 도움말 패널(검색어가 비어 있을 때 결과 리스트 자리에 전체 폭으로 표시), 다크모드 토글 버튼, 결과 항목의 경로(meta-line) 표시, "결과 없음" 2단 안내 문구, 창을 둥근 모서리로 띄우는 플로팅 카드 룩(투명 창 + CSS `box-shadow` — macOS 네이티브 창 그림자는 웹뷰 투명도와 무관하게 창 프레임 전체를 사각형으로 그리므로 꺼두고 대체했다, `frontend/src/styles/layout.css` 참조).
+
+프로토타입과 의도적으로 다른 점: 폰트 — PRD의 "인터넷 연결 없이 동작" 원칙 때문에 프로토타입의 Google Fonts(IBM Plex) 대신 OS 기본 한글 폰트를 쓴다.
+
+아직 반영 안 된 것(백엔드가 없어서 채울 데이터가 없음): 설정(⚙) 버튼은 자리만 있고 비활성 상태(TASK-704), 하단 색인 상태 문구는 아직 없음(TASK-901/904 — 실제 색인 진행 데이터가 있어야 하므로 가짜 숫자를 넣지 않았다). 트레이·전역 단축키(TASK-801/802 — 그때까지는 `npm run tauri dev`로 직접 띄워야 창이 보인다).

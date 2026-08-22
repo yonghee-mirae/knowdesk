@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KnowDesk</title>
+    <link rel="stylesheet" href="/src/styles/tokens.css" />
+    <link rel="stylesheet" href="/src/styles/layout.css" />
+  </head>
+  <body>
+    <div id="app">
+      <kd-search-bar></kd-search-bar>
+      <div class="kd-body single-pane" id="body">
+        <kd-result-list hidden></kd-result-list>
+        <kd-syntax-help></kd-syntax-help>
+        <kd-preview hidden></kd-preview>
+      </div>
+      <footer class="kd-footer">
+        <span><kbd>↑</kbd><kbd>↓</kbd> 이동</span>
+        <span><kbd>Enter</kbd> 열기</span>
+        <span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> 폴더 열기</span>
+        <span><kbd>Ctrl</kbd>+<kbd>C</kbd> 경로 복사</span>
+        <span><kbd>Esc</kbd> 닫기</span>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

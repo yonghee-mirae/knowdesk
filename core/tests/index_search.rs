@@ -391,6 +391,59 @@ fn finds_irregular_verb_stem_only_with_kiwi() {
 }
 
 #[test]
+fn kiwi_marks_irregular_stem_match_as_morphological_not_exact() {
+    // Bug report (2026-08-22): searching the already-literal stem "짓" against "지었다"
+    // (ㅅ-irregular past tense of 짓다) was tagged "exact match" — wrong. "짓" never
+    // appears in "지었다" (지/었/다); it's only findable at all because Kiwi's
+    // morphological analysis put the stem into `morph_kiwi` at index time. Match-kind was
+    // deciding "exact" purely from "the query wasn't expanded", but an unexpanded query
+    // (searching a term that already equals its own stem) can still only be found via
+    // morph_kiwi, never literally in the source — this is exactly that case, and unlike
+    // `finds_irregular_verb_stem_only_with_kiwi` above, keeps Kiwi active at search time
+    // too, since confirming "morphological, not exact" requires `Tokenizer::locate`.
+    let Some(kiwi_result) = KiwiTokenizer::from_env() else {
+        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR not set, skipping");
+        return;
+    };
+    let kiwi = kiwi_result.expect("Kiwi initialization failed");
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("공사보고서.txt"), "그는 새 건물을 지었다.").unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &BigramTokenizer,
+        kiwi: Some(&kiwi),
+    };
+    pipeline.index_directory(dir.path()).unwrap();
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: Some(&kiwi),
+    };
+    let result = search
+        .search(&SearchRequest {
+            query: "짓".to_string(),
+            mode: SearchMode::Content,
+            limit: 10,
+        })
+        .unwrap();
+
+    assert_eq!(result.hits.len(), 1, "hits: {:?}", result.hits);
+    assert_eq!(result.hits[0].match_kind, MatchKind::Morphological);
+    let snippet = result.hits[0].snippet.as_deref().unwrap_or_default();
+    assert!(
+        snippet.contains(">>지었다.<<"),
+        "should highlight the original-text span the stem was recovered from: {snippet:?}"
+    );
+}
+
+#[test]
 fn expands_query_with_kiwi_to_find_dictionary_form() {
     // Morphological analysis on the query side: searching with the dictionary form "짓다"
     // should still find the inflected form "지었고". This is done by query expansion
@@ -569,15 +622,24 @@ fn kiwi_query_expansion_finds_compound_noun_attached_to_particle() {
 
 #[test]
 fn kiwi_query_expansion_still_finds_misanalyzed_compound_via_or_safety_net() {
-    // Opposite case: even with context, Kiwi can incorrectly split "이사회" into
-    // "이(determiner)+사회" (because it shares its form with the much more common phrase
-    // "이 사회" — confirmed directly via `kiwi-cli`). Both the indexed "이사회에서" and the
-    // query "이사회" get split the same way incorrectly, but thanks to the safety-net design
-    // that keeps the original query as an OR rather than replacing it, the document is still
-    // found (via the shared "사회" fragment) — however, since the literal "이사회" appears
-    // nowhere, it's correctly tagged "morphological match" (with a replacement approach,
-    // this case would have found nothing at all — once split into "이 사회" it becomes
-    // unrelated to the original meaning).
+    // Even with context, Kiwi can incorrectly split "이사회" into "이(determiner)+사회"
+    // (because it shares its form with the much more common phrase "이 사회" — confirmed
+    // directly via `kiwi-cli`). Both the indexed "이사회에서" and the query "이사회" get
+    // split the same way incorrectly, but thanks to the safety-net design that keeps the
+    // original query as an OR rather than replacing it, the document is still found (via
+    // the shared "사회" fragment) — with a replacement approach, this case would have
+    // found nothing at all (once split into "이 사회" it becomes unrelated to the
+    // original meaning).
+    //
+    // Even though the FTS match itself came through that misanalyzed "사회" fragment,
+    // this is still tagged "exact match": the literal characters "이사회" are right there
+    // in the source text ("이사회에서"), just not as their own separate FTS token (no
+    // space before "에서") — a bug fix (2026-08-22) made match-kind track the same
+    // literal-vs-Kiwi-located-span check the highlight already used, instead of whether
+    // the *query* needed Kiwi expansion at all. Before that fix this asserted
+    // `Morphological` on the reasoning that "the literal 이사회 appears nowhere" — which
+    // was simply wrong: it appears right there as a substring, and the snippet assertion
+    // below already proved it by highlighting exactly that span.
     let Some(kiwi_result) = KiwiTokenizer::from_env() else {
         eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR not set, skipping");
         return;
@@ -618,7 +680,13 @@ fn kiwi_query_expansion_still_finds_misanalyzed_compound_via_or_safety_net() {
 
     assert_eq!(result.hits.len(), 1, "hits: {:?}", result.hits);
     assert_eq!(result.hits[0].filename, "결의록.txt");
-    assert_eq!(result.hits[0].match_kind, MatchKind::Morphological);
+    assert_eq!(result.hits[0].match_kind, MatchKind::Exact);
+    let snippet = result.hits[0].snippet.as_deref().unwrap_or_default();
+    assert!(
+        snippet.contains(">>이사회<<"),
+        "the literal substring should be highlighted even though FTS5 found it via the \
+         misanalyzed 사회 fragment: {snippet:?}"
+    );
 }
 
 #[test]
@@ -776,6 +844,54 @@ fn widens_highlight_to_include_trailing_symbol_not_part_of_any_fts5_token() {
     assert!(
         snippet.contains(">>3.2%<<"),
         "% was not included in the highlight: {snippet:?}"
+    );
+}
+
+#[test]
+fn highlights_every_or_term_not_just_the_first_ones_fts5_native_highlight_covers() {
+    // Bug report: searching "채권 OR 규정" only highlighted "채권", even though "규정" is
+    // right there in the same snippet excerpt (inside "규정한다"). FTS5's own snippet()
+    // highlighted "채권" (a literal body token) but not "규정" (only reachable via the
+    // bigram column, since "규정한다" is one opaque token to FTS5's default tokenizer) —
+    // and since *some* highlight was present, the single-needle fallback rebuild never
+    // ran, silently dropping the second term's highlight entirely.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("규정.txt"), "채권 발행 절차를 규정한다.").unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let tokenizer = BigramTokenizer;
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &tokenizer,
+        kiwi: None,
+    };
+    pipeline.index_directory(dir.path()).unwrap();
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: None,
+    };
+    let result = search
+        .search(&SearchRequest {
+            query: "채권 OR 규정".to_string(),
+            mode: SearchMode::Content,
+            limit: 10,
+        })
+        .unwrap();
+
+    assert_eq!(result.hits.len(), 1, "hits: {:?}", result.hits);
+    let snippet = result.hits[0].snippet.as_deref().unwrap_or_default();
+    assert!(
+        snippet.contains(">>채권<<"),
+        "채권 should be highlighted: {snippet:?}"
+    );
+    assert!(
+        snippet.contains(">>규정<<"),
+        "규정 should also be highlighted, not just the first OR term: {snippet:?}"
     );
 }
 

@@ -1,0 +1,91 @@
+/* The Tauri window itself is the fixed-size panel (`docs/12_UI_Spec.md` item 8 -
+   "창 크기는 고정"), so `#app` is a fixed 880x520 card - no responsive
+   breakpoints. The window is transparent (`tauri.conf.json`'s `transparent`)
+   and sized 2*`--shadow-margin` larger than the card on each axis; `body`
+   fills that whole window fully transparently and just centers `#app` in it,
+   leaving a see-through margin for `#app`'s own `box-shadow` to bleed into.
+   A native OS window shadow can't do this: it traces the full rectangular
+   window frame regardless of the webview's actual transparency (confirmed in
+   practice - the card itself came out correctly rounded, but the shadow
+   around it stayed square), so `tauri.conf.json` turns that off
+   (`shadow: false`) and this CSS shadow replaces it entirely. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  width: 880px;
+  height: 520px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.kd-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 38%) 1fr;
+}
+
+/* The syntax help has nothing to preview, so it gets the whole width instead
+   of sitting next to an empty placeholder pane (`main.ts` toggles this
+   alongside hiding kd-result-list/kd-preview and showing kd-syntax-help). */
+.kd-body.single-pane {
+  grid-template-columns: 1fr;
+}
+
+.kd-footer {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.kd-footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.kd-footer kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--ink);
+}

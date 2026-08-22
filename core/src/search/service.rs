@@ -49,7 +49,6 @@ impl<'a> SqliteSearchService<'a> {
             Some(kiwi) => expand_with_kiwi(parsed, kiwi),
             None => (parsed.match_expr.clone(), Vec::new()),
         };
-        let expanded = query_expr != parsed.match_expr;
 
         let rows =
             SearchRepository::search_content(self.conn, &query_expr, &parsed.filters, limit)?;
@@ -62,52 +61,60 @@ impl<'a> SqliteSearchService<'a> {
 
         let mut hits = Vec::with_capacity(rows.len());
         for mut row in rows {
-            // If we didn't expand, only "exact match" exists in the first
-            // place — no need to re-verify.
-            let match_kind = if !expanded {
-                MatchKind::Exact
-            } else {
-                match &row.document_id {
-                    Some(document_id)
-                        if SearchRepository::document_matches_content(
-                            self.conn,
-                            document_id,
-                            &parsed.match_expr,
-                        )? =>
-                    {
-                        MatchKind::Exact
-                    }
-                    Some(_) => MatchKind::Morphological,
-                    None => MatchKind::Exact,
-                }
-            };
-
-            // No highlight in the body-column (column 0) snippet means it
-            // matched only via morph/morph_kiwi (e.g. "레이아웃" within
-            // "레이아웃과" — with a particle attached, that token isn't in
-            // the body column). We reinforce this by looking up the search
-            // term directly in the stored source text and highlighting it:
-            //   1. Try a literal lookup (the search term as-is, or the
-            //      Kiwi-analyzed stem).
-            //   2. If that still fails (as with irregular conjugations where
-            //      the surface form itself differs — e.g. "지었다" doesn't
-            //      contain the letters "짓"), and Kiwi can tell us the actual
-            //      position of the word segment that morpheme belongs to in
-            //      the source text, highlight that span.
-            // If neither works, leave the source text unhighlighted — better
-            // than a bare token list.
+            // How this row was actually found decides both the match-kind tag
+            // and (if FTS5's own body-column snippet came up empty) how to
+            // build a highlight by hand:
+            //   1. FTS5 already highlighted the body-column snippet — the
+            //      search term is a literal token in the source text as-is.
+            //      Exact, nothing more to do.
+            //   2. Otherwise, look for the term as a literal character
+            //      substring in the stored source text ourselves. This also
+            //      catches matches FTS5's tokenizer can't isolate for
+            //      snippet() (e.g. a particle glued onto a noun with no
+            //      space, or a bigram-only substring match) — still an exact,
+            //      character-for-character match even though FTS5 can't
+            //      highlight it directly.
+            //   3. Only when even that fails, and Kiwi's morphological
+            //      analysis is the only reason this row was found at all
+            //      (the surface form literally differs from the search term —
+            //      e.g. the ㅅ-irregular "지었다" for the stem "짓"), is it a
+            //      morphological match.
+            // Previously this was decided by whether the *query* needed Kiwi
+            // expansion at all, which mislabeled exactly this case as "exact"
+            // (a plain, unexpanded query like "짓" can still only be found via
+            // morph_kiwi, never literally in the source) — confirmed by the
+            // snippet already highlighting a span the query's own characters
+            // don't literally contain.
             let has_highlight = row.snippet.as_deref().is_some_and(|s| s.contains(">>"));
+            let mut match_kind = MatchKind::Exact;
+
             if !has_highlight && !needles.is_empty() {
                 if let Some(document_id) = &row.document_id {
                     let store = SqliteDocumentStore { conn: self.conn };
                     if let Some(body) = store.get_body(document_id)? {
-                        let span = find_literal_span(&body, &needles)
-                            .or_else(|| self.kiwi.and_then(|k| k.locate(&body, &needles)));
-                        if let Some((start, len)) = span {
+                        if let Some((start, len)) = find_literal_span(&body, &needles) {
+                            row.snippet = Some(build_snippet(&body, start, len));
+                        } else if let Some((start, len)) =
+                            self.kiwi.and_then(|k| k.locate(&body, &needles))
+                        {
+                            match_kind = MatchKind::Morphological;
                             row.snippet = Some(build_snippet(&body, start, len));
                         }
                     }
                 }
+            }
+
+            // A multi-term query (e.g. "채권 OR 규정") can have FTS5 natively
+            // highlight some needles (literal body tokens) but not others
+            // (only reachable via bigram/morph_kiwi, like "규정" embedded in
+            // "규정한다") — `has_highlight` above only checks whether *any*
+            // needle got a highlight, so a query like that would otherwise
+            // highlight only the first term and silently leave the second
+            // one bare even when it's sitting right there in the same
+            // excerpt. Find and highlight any needle that's visible verbatim
+            // in the snippet text itself but not yet marked.
+            if !needles.is_empty() {
+                row.snippet = row.snippet.map(|s| highlight_missing_needles(&s, &needles));
             }
 
             // FTS5's snippet() decides the highlight range based on its own
@@ -227,6 +234,69 @@ fn build_snippet(body: &str, start: usize, len: usize) -> String {
         snippet.push_str("...");
     }
     snippet
+}
+
+/// Finds any `needle` that appears literally (case-insensitively) in
+/// `snippet`'s plain text but isn't already inside a `>>...<<` span, and
+/// highlights it too. Only looks within this snippet excerpt, not the whole
+/// document — a needle that only occurs elsewhere in the source text is left
+/// alone, since a single snippet window can't show every match location at
+/// once.
+fn highlight_missing_needles(snippet: &str, needles: &[String]) -> String {
+    // Strip the existing >>/<< markers, recording which plain-text positions
+    // were inside one, so a needle overlapping an existing highlight isn't
+    // re-marked (and doesn't corrupt the marker pairing).
+    let chars: Vec<char> = snippet.chars().collect();
+    let mut plain: Vec<char> = Vec::with_capacity(chars.len());
+    let mut highlighted: Vec<bool> = Vec::with_capacity(chars.len());
+    let mut in_mark = false;
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i..].starts_with(&['>', '>']) {
+            in_mark = true;
+            i += 2;
+        } else if chars[i..].starts_with(&['<', '<']) {
+            in_mark = false;
+            i += 2;
+        } else {
+            plain.push(chars[i]);
+            highlighted.push(in_mark);
+            i += 1;
+        }
+    }
+
+    for needle in needles {
+        let needle_chars: Vec<char> = needle.chars().collect();
+        if needle_chars.is_empty() {
+            continue;
+        }
+        let mut search_from = 0;
+        while let Some(offset) = find_ignore_ascii_case(&plain[search_from..], &needle_chars) {
+            let start = search_from + offset;
+            let end = start + needle_chars.len();
+            if !highlighted[start..end].iter().any(|&h| h) {
+                highlighted[start..end].iter_mut().for_each(|h| *h = true);
+            }
+            search_from = start + 1;
+        }
+    }
+
+    let mut out = String::new();
+    let mut idx = 0;
+    while idx < plain.len() {
+        if highlighted[idx] {
+            out.push_str(">>");
+            while idx < plain.len() && highlighted[idx] {
+                out.push(plain[idx]);
+                idx += 1;
+            }
+            out.push_str("<<");
+        } else {
+            out.push(plain[idx]);
+            idx += 1;
+        }
+    }
+    out
 }
 
 /// If the characters right after a highlight (`>>...<<`) span continue into

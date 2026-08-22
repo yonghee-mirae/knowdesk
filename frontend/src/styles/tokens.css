@@ -1,0 +1,92 @@
+/* Design tokens, ported from the approved browser prototype
+   (https://claude.ai/code/artifact/5f0c4a03-c1be-4b02-82fb-5899b6976af1).
+   No web fonts here (unlike the prototype) - KnowDesk runs fully offline
+   (`docs/01_KnowDesk_PRD.md`: "인터넷 연결·외부 API·중앙 서버 없이 동작한다"), so
+   typography uses the OS's own Korean UI fonts instead of a CDN. */
+
+:root {
+  --bg: #e7ebe8;
+  --surface: #fcfdfc;
+  --surface-2: #eaeeeb;
+  --surface-3: #dfe5e1;
+  --ink: #152220;
+  --ink-muted: #57685f;
+  --ink-faint: #8a988f;
+  --border: #d9dfdb;
+  --border-strong: #c3ccc6;
+  --accent: #0e6b58;
+  --accent-strong: #0a5445;
+  --accent-ink: #ffffff;
+  --accent-wash: #0e6b581a;
+  --mark-bg: #f5b8ce;
+  --mark-ink: #5c1338;
+  --tier-meta: #9a4b33;
+  --tier-meta-wash: #9a4b331a;
+  /* A distinct hue for morphological matches (`kd-result-list`'s stripe).
+     Tried gray, blue, and violet at various lightness levels - violet at
+     high vividness finally read as clearly different from --accent's dark
+     teal, but felt too visually loud next to it. Settled on a warm
+     goldenrod instead - still a big hue jump from teal, but calmer. */
+  --tier-morph: #b8860b;
+  --radius: 14px;
+  /* Drawn by the CSS card itself, not the OS - a native NSWindow shadow traces
+     the full rectangular window frame regardless of the webview's actual
+     transparency, which is exactly the "rounded card, square shadow" bug this
+     was added to fix (`tauri.conf.json` sets `shadow: false`, and the window
+     is padded with `--shadow-margin` of transparent space for this to bleed
+     into without getting clipped at the window edge). */
+  --shadow: 0 20px 48px -16px rgba(15, 30, 25, 0.35), 0 2px 8px rgba(15, 30, 25, 0.08);
+  --shadow-margin: 64px;
+
+  --font-sans:
+    'Apple SD Gothic Neo', 'Malgun Gothic', '맑은 고딕', -apple-system, BlinkMacSystemFont,
+    system-ui, sans-serif;
+  --font-mono:
+    ui-monospace, 'SF Mono', Consolas, 'Liberation Mono', 'D2Coding', monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0d1512;
+    --surface: #141f1b;
+    --surface-2: #1c2925;
+    --surface-3: #24332d;
+    --ink: #e7eeeb;
+    --ink-muted: #93a69d;
+    --ink-faint: #62766d;
+    --border: #28362f;
+    --border-strong: #384a41;
+    --accent: #3ecfae;
+    --accent-strong: #56e0c0;
+    --accent-ink: #06231c;
+    --accent-wash: #3ecfae22;
+    --mark-bg: #e8a0c0;
+    --mark-ink: #3d0d22;
+    --tier-meta: #e2916f;
+    --tier-meta-wash: #e2916f22;
+    --tier-morph: #e8c34a;
+    --shadow: 0 20px 48px -16px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0d1512;
+  --surface: #141f1b;
+  --surface-2: #1c2925;
+  --surface-3: #24332d;
+  --ink: #e7eeeb;
+  --ink-muted: #93a69d;
+  --ink-faint: #62766d;
+  --border: #28362f;
+  --border-strong: #384a41;
+  --accent: #3ecfae;
+  --accent-strong: #56e0c0;
+  --accent-ink: #06231c;
+  --accent-wash: #3ecfae22;
+  --mark-bg: #e8a0c0;
+  --mark-ink: #3d0d22;
+  --tier-meta: #e2916f;
+  --tier-meta-wash: #e2916f22;
+  --tier-morph: #e8c34a;
+  --shadow: 0 20px 48px -16px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+}

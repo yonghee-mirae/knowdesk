@@ -48,6 +48,12 @@ pub fn parse(input: &str) -> ParsedQuery {
             filters.modified_before = Some(rest.to_string());
         } else if let Some(rest) = token.strip_prefix("m=") {
             filters.modified_on = Some(rest.to_string());
+        } else if let Some(op) = normalize_operator(&token) {
+            // FTS5's own query syntax requires AND/OR/NOT uppercase - lowercase
+            // "and"/"or"/"not" are just ordinary barewords to it, not operators
+            // (confirmed in practice: "채권 or 발행" silently found nothing,
+            // treating "or" as a literal keyword no document contains).
+            terms.push(op.to_string());
         } else {
             terms.push(sanitize_term(&token));
         }
@@ -57,6 +63,22 @@ pub fn parse(input: &str) -> ParsedQuery {
         match_expr: terms.join(" "),
         terms,
         filters,
+    }
+}
+
+/// Case-insensitively recognizes AND/OR/NOT (e.g. "and", "Or", "NOT") as an
+/// operator and returns its canonical uppercase form. A quoted token like
+/// `"and"` never reaches this (the quote characters make it unequal), so a
+/// literal search for the word itself still works as documented.
+fn normalize_operator(token: &str) -> Option<&'static str> {
+    if token.eq_ignore_ascii_case("AND") {
+        Some("AND")
+    } else if token.eq_ignore_ascii_case("OR") {
+        Some("OR")
+    } else if token.eq_ignore_ascii_case("NOT") {
+        Some("NOT")
+    } else {
+        None
     }
 }
 
@@ -169,6 +191,20 @@ mod tests {
         assert_eq!(parse("채권 OR 회사채").match_expr, "채권 OR 회사채");
         assert_eq!(parse("채권 NOT 국채").match_expr, "채권 NOT 국채");
         assert_eq!(parse("발행*").match_expr, "발행*");
+    }
+
+    #[test]
+    fn normalizes_lowercase_and_mixed_case_operators() {
+        // Bug report: "채권 or 발행" silently found nothing - FTS5's own query syntax
+        // requires AND/OR/NOT uppercase, so lowercase "or" was passed through as an
+        // ordinary bareword (a literal keyword no document contains) instead of the OR
+        // operator.
+        assert_eq!(parse("채권 or 발행").match_expr, "채권 OR 발행");
+        assert_eq!(parse("채권 And 발행").match_expr, "채권 AND 발행");
+        assert_eq!(parse("채권 not 국채").match_expr, "채권 NOT 국채");
+        // A quoted "or" must still mean a literal search for the word itself, not the
+        // operator - unaffected by the case-insensitive operator recognition above.
+        assert_eq!(parse("\"or\"").match_expr, "\"or\"");
     }
 
     #[test]

@@ -8,7 +8,7 @@
 //! joining against `documents`/`paths`.
 
 use rusqlite::types::ToSql;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 
 use crate::search::parser::Filters;
 
@@ -175,25 +175,6 @@ impl SearchRepository {
         // highlighting the term directly in the original text is done by `search::service`,
         // since it needs the stored original text (`document_bodies`).
         Ok(dedupe_by_document_id(rows, limit))
-    }
-
-    /// Checks whether this document matches `literal_expr` as-is (without query expansion).
-    /// Used to distinguish whether a hit found via query expansion is an "exact match" or a
-    /// "match via morphological analysis" (`search::service`).
-    pub fn document_matches_content(
-        conn: &Connection,
-        document_id: &str,
-        literal_expr: &str,
-    ) -> rusqlite::Result<bool> {
-        let matched: Option<i64> = conn
-            .query_row(
-                "SELECT 1 FROM content_fts
-                 WHERE content_fts MATCH ?1 AND document_id = ?2 LIMIT 1",
-                params![literal_expr, document_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        Ok(matched.is_some())
     }
 }
 

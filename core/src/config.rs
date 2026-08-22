@@ -13,6 +13,12 @@ pub const DEFAULT_TEMP_PATTERNS: &[&str] = &["~$", ".tmp", ".temp", ".cache"];
 pub struct Config {
     pub db_path: PathBuf,
     pub max_file_size_mb: u64,
+    /// Folders to index and continuously watch (`docs/12_UI_Spec.md` C5's
+    /// Settings Window mockup, TASK-704 — registering folders through that UI
+    /// isn't built yet, so today this is only populated by hand-editing the
+    /// TOML file this struct is loaded from). Empty by default: nothing is
+    /// indexed until at least one folder is listed here.
+    pub watched_folders: Vec<PathBuf>,
 }
 
 impl Default for Config {
@@ -20,6 +26,7 @@ impl Default for Config {
         Self {
             db_path: PathBuf::from("knowdesk.db"),
             max_file_size_mb: DEFAULT_MAX_FILE_SIZE_MB,
+            watched_folders: Vec::new(),
         }
     }
 }

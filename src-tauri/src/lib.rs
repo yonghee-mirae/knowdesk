@@ -2,7 +2,17 @@
 // (`CLAUDE.md`: "core는 Tauri를 절대 참조하지 않는다. 모든 OS 통합은 src-tauri로 격리한다").
 // `open_path`/`open_parent_folder` are the exception (native opener, no equivalent in `core`).
 
+use knowdesk_core::config::Config;
 use knowdesk_core::db::Db;
+use knowdesk_core::extract::ooxml::{DocxExtractor, PptxExtractor};
+use knowdesk_core::extract::pdf::PdfExtractor;
+use knowdesk_core::extract::txt::TxtExtractor;
+use knowdesk_core::extract::xlsx::XlsxExtractor;
+use knowdesk_core::extract::ContentExtractor;
+use knowdesk_core::index::pipeline::IndexPipeline;
+use knowdesk_core::index::queue;
+use knowdesk_core::index::watcher::FileWatcher;
+use knowdesk_core::nlp::bigram::BigramTokenizer;
 use knowdesk_core::nlp::kiwi::KiwiTokenizer;
 use knowdesk_core::nlp::Tokenizer;
 use knowdesk_core::search::service::SqliteSearchService;
@@ -13,6 +23,7 @@ use knowdesk_core::search::{
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -102,10 +113,25 @@ fn db_path() -> PathBuf {
     if let Ok(path) = std::env::var("KNOWDESK_DB_PATH") {
         return PathBuf::from(path);
     }
-    let dir = dirs::data_local_dir()
+    app_data_dir().join("knowdesk.db")
+}
+
+/// Per-OS app-data directory shared by `db_path()` and `config_path()`.
+fn app_data_dir() -> PathBuf {
+    dirs::data_local_dir()
         .unwrap_or_else(std::env::temp_dir)
-        .join("KnowDesk");
-    dir.join("knowdesk.db")
+        .join("KnowDesk")
+}
+
+/// `KNOWDESK_CONFIG_PATH` overrides the config file location, same convention as
+/// `KNOWDESK_DB_PATH` (`db_path()`). There's no Settings Window yet (TASK-704) to
+/// write this file through, so until then a missing file (the common case) just
+/// falls back to `Config::default()` - i.e. no folders watched, nothing indexed.
+fn config_path() -> PathBuf {
+    if let Ok(path) = std::env::var("KNOWDESK_CONFIG_PATH") {
+        return PathBuf::from(path);
+    }
+    app_data_dir().join("config.toml")
 }
 
 /// Initializes Kiwi from `KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`, same
@@ -221,6 +247,72 @@ fn toggle_search_window(app: &AppHandle) {
     }
 }
 
+fn default_extractors() -> Vec<Box<dyn ContentExtractor>> {
+    vec![
+        Box::new(TxtExtractor),
+        Box::new(XlsxExtractor),
+        Box::new(DocxExtractor),
+        Box::new(PptxExtractor),
+        Box::new(PdfExtractor),
+    ]
+}
+
+/// Keeps every folder in `Config::watched_folders` indexed for the rest of the
+/// process's lifetime: an initial full scan, then continuous watching. A no-op
+/// if the list is empty (the common case today - see `config_path()`).
+///
+/// One thread total, not one per folder: `FileWatcher::new` accepts multiple
+/// roots on a single underlying watcher (`core/src/index/watcher.rs`), which
+/// is what lets this stay a single thread with a single `KiwiTokenizer`
+/// instance - Kiwi isn't `Send` (see `SearchWorker`'s doc comment above), so N
+/// folders on N threads would mean N separate Kiwi models loaded at once.
+fn spawn_index_worker(db_path: PathBuf, config: Config) {
+    if config.watched_folders.is_empty() {
+        return;
+    }
+    thread::spawn(move || {
+        if let Err(e) = run_index_worker(&db_path, &config) {
+            eprintln!("Index worker failed: {e}");
+        }
+    });
+}
+
+fn run_index_worker(db_path: &Path, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+    let db = Db::open(db_path)?;
+    let extractors = default_extractors();
+    let bigram = BigramTokenizer;
+    let kiwi = load_kiwi();
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config,
+        extractors: &extractors,
+        bigram: &bigram,
+        kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
+    };
+
+    for folder in &config.watched_folders {
+        let outcome = pipeline.index_directory(folder)?;
+        eprintln!(
+            "Indexed {}: {} full-text, {} metadata, {} skipped",
+            folder.display(),
+            outcome.full,
+            outcome.meta,
+            outcome.skip
+        );
+    }
+
+    // Same debounce as `knowdesk-cli watch`'s default (`cli/src/main.rs`).
+    let watcher = FileWatcher::new(&config.watched_folders, Duration::from_millis(3000))?;
+    while let Some(events) = watcher.recv() {
+        for (path, result) in queue::drain(&pipeline, events) {
+            if let Err(e) = result {
+                eprintln!("{}: index error: {e}", path.display());
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let db_path = db_path();
@@ -228,6 +320,11 @@ pub fn run() {
         // Best-effort - `Db::open` below fails loudly if this didn't work.
         let _ = std::fs::create_dir_all(parent);
     }
+    let config = Config::load(Some(&config_path())).unwrap_or_else(|e| {
+        eprintln!("Failed to load config, using defaults: {e}");
+        Config::default()
+    });
+    spawn_index_worker(db_path.clone(), config);
     let worker = SearchWorker::spawn(db_path);
 
     tauri::Builder::default()

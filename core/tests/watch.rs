@@ -110,7 +110,7 @@ fn watch_indexes_new_file_and_removes_deleted_file() {
         kiwi: None,
     };
 
-    let watcher = FileWatcher::new(dir.path(), DEBOUNCE).unwrap();
+    let watcher = FileWatcher::new(&[dir.path()], DEBOUNCE).unwrap();
 
     let file_path = dir.path().join("규정.txt");
     std::fs::write(&file_path, "채권 발행 절차").unwrap();
@@ -169,6 +169,46 @@ fn watch_indexes_new_file_and_removes_deleted_file() {
 }
 
 #[test]
+fn watch_multiple_roots_on_a_single_watcher() {
+    // `src-tauri`'s index worker watches every configured folder on one
+    // `FileWatcher` (one thread, one `KiwiTokenizer`) rather than one per
+    // folder (`core/src/index/watcher.rs`'s doc comment on `new`) - this pins
+    // that a single watcher instance actually picks up changes from more
+    // than one of its watched roots, not just the first.
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let bigram = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &bigram,
+        kiwi: None,
+    };
+
+    let watcher = FileWatcher::new(&[dir_a.path(), dir_b.path()], DEBOUNCE).unwrap();
+
+    std::fs::write(dir_a.path().join("규정.txt"), "채권 발행 절차").unwrap();
+    let events = watcher
+        .recv_timeout(WAIT)
+        .expect("did not receive a creation event from the first root");
+    let outcomes = queue::drain(&pipeline, events);
+    assert_eq!(outcomes.len(), 1, "events: {:?}", outcomes);
+    assert!(matches!(outcomes[0].1, Ok(WatchOutcome::Indexed(_))));
+
+    std::fs::write(dir_b.path().join("결의.txt"), "이사회 결의").unwrap();
+    let events = watcher
+        .recv_timeout(WAIT)
+        .expect("did not receive a creation event from the second root");
+    let outcomes = queue::drain(&pipeline, events);
+    assert_eq!(outcomes.len(), 1, "events: {:?}", outcomes);
+    assert!(matches!(outcomes[0].1, Ok(WatchOutcome::Indexed(_))));
+}
+
+#[test]
 fn watch_ignores_short_lived_temp_file_from_office_style_save() {
     // Simulates the temp file (`~$filename`) that Office creates on save and soon deletes.
     // If it disappears within the debounce window, there should be no indexing attempt at all.
@@ -185,7 +225,7 @@ fn watch_ignores_short_lived_temp_file_from_office_style_save() {
         kiwi: None,
     };
 
-    let watcher = FileWatcher::new(dir.path(), DEBOUNCE).unwrap();
+    let watcher = FileWatcher::new(&[dir.path()], DEBOUNCE).unwrap();
 
     // Canonicalize before building the expected paths below: on macOS, `notify`'s
     // FSEvents backend reports paths resolved through `/var` -> `/private/var` (a

@@ -33,9 +33,18 @@ pub struct FileWatcher {
 }
 
 impl FileWatcher {
-    /// Recursively watches under `root`. `debounce` is the time window of quiet after
-    /// the last event required before a change is settled/confirmed.
-    pub fn new(root: &Path, debounce: Duration) -> notify::Result<Self> {
+    /// Recursively watches under each of `roots`, all funneled through the same
+    /// underlying `notify` watcher/channel - so `recv()` already multiplexes events
+    /// from every root without the caller needing one `FileWatcher` (and therefore
+    /// one thread) per folder. That matters because a caller watching N folders while
+    /// also using a `Tokenizer` per watcher (e.g. `src-tauri`'s index worker, which
+    /// fills `content_fts.morph_kiwi` while indexing) would otherwise need N separate
+    /// `KiwiTokenizer` instances alive at once - it isn't `Send`, so it can't be shared
+    /// across threads (see `src-tauri`'s `SearchWorker` doc comment) - multiplying
+    /// exactly the idle-memory cost `06_Development_Roadmap.md` S-2 is worried about.
+    /// `debounce` is the time window of quiet after the last event required before a
+    /// change is settled/confirmed.
+    pub fn new<P: AsRef<Path>>(roots: &[P], debounce: Duration) -> notify::Result<Self> {
         let (tx, raw_events) = channel();
         let mut watcher = RecommendedWatcher::new(
             move |res: notify::Result<Event>| {
@@ -47,7 +56,9 @@ impl FileWatcher {
             },
             Config::default(),
         )?;
-        watcher.watch(root, RecursiveMode::Recursive)?;
+        for root in roots {
+            watcher.watch(root.as_ref(), RecursiveMode::Recursive)?;
+        }
         Ok(Self {
             _watcher: watcher,
             raw_events,

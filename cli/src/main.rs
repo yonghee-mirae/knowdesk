@@ -181,7 +181,7 @@ fn run_watch(db: &Db, config: &Config, path: &Path, debounce_ms: u64) -> anyhow:
         kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
     };
 
-    let watcher = FileWatcher::new(path, std::time::Duration::from_millis(debounce_ms))?;
+    let watcher = FileWatcher::new(&[path], std::time::Duration::from_millis(debounce_ms))?;
     println!("Watching for changes: {} (Ctrl+C to quit)", path.display());
     while let Some(events) = watcher.recv() {
         for (path, result) in queue::drain(&pipeline, events) {

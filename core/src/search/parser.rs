@@ -2,8 +2,8 @@
 //!
 //! Keyword/Phrase/AND/OR/NOT/Prefix are already supported as-is by FTS5 MATCH
 //! syntax, so the job here is to strip out filter tokens
-//! (`ext:`/`path:`/`tier:`/`drm:`/`modified>`/`modified<`) and pass the rest
-//! straight through as an FTS5 MATCH string.
+//! (`ext:`/`path:`/`tier:`/`drm:`/`modified>`/`modified<`/`modified=`) and
+//! pass the rest straight through as an FTS5 MATCH string.
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filters {
@@ -13,6 +13,11 @@ pub struct Filters {
     pub drm: Option<bool>,
     pub modified_after: Option<String>,
     pub modified_before: Option<String>,
+    /// Exact calendar-day match, e.g. `modified=2026-08-10`. `paths.modified_at` is a
+    /// full RFC3339 timestamp, so this is compared by calendar day
+    /// (`push_filter_clauses` wraps both sides in SQLite's `date()`), not by exact
+    /// string equality — otherwise it would never match anything.
+    pub modified_on: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +47,8 @@ pub fn parse(input: &str) -> ParsedQuery {
             filters.modified_after = Some(rest.to_string());
         } else if let Some(rest) = token.strip_prefix("modified<") {
             filters.modified_before = Some(rest.to_string());
+        } else if let Some(rest) = token.strip_prefix("modified=") {
+            filters.modified_on = Some(rest.to_string());
         } else {
             terms.push(sanitize_term(&token));
         }
@@ -208,7 +215,7 @@ mod tests {
     #[test]
     fn extracts_filters() {
         let parsed = parse(
-            "채권 ext:pdf path:리서치 tier:full drm:true modified>2026-01-01 modified<2026-08-01",
+            "채권 ext:pdf path:리서치 tier:full drm:true modified>2026-01-01 modified<2026-08-01 modified=2026-08-10",
         );
         assert_eq!(parsed.match_expr, "채권");
         assert_eq!(parsed.filters.extension.as_deref(), Some("pdf"));
@@ -220,5 +227,6 @@ mod tests {
             parsed.filters.modified_before.as_deref(),
             Some("2026-08-01")
         );
+        assert_eq!(parsed.filters.modified_on.as_deref(), Some("2026-08-10"));
     }
 }

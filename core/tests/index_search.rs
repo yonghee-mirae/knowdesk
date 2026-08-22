@@ -66,6 +66,64 @@ fn indexes_sample_folder_and_finds_snippet() {
 }
 
 #[test]
+fn grouping_parens_change_the_result_from_the_ungrouped_query() {
+    // Real bug, confirmed against the actual FTS5 index: `sanitize_term` used to quote
+    // `(건물`/`채권)` as literal phrases, and FTS5 tokenizes phrase content the same way
+    // it tokenizes indexed text — stripping the `(`/`)` as punctuation — so the phrase
+    // silently degraded to matching bare `건물`/`채권` and the grouping just vanished,
+    // with no error. `(건물 OR 채권) AND 결의` and `건물 OR 채권 AND 결의` returned
+    // identical results. This test pins the fix: with real grouping, `공사.txt` (which
+    // has "건물" but no "결의") must be excluded by the parenthesized query but not by
+    // the ungrouped one.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("공사.txt"), "그는 새 건물을 지었다.").unwrap();
+    std::fs::write(
+        dir.path().join("이사회.txt"),
+        "이사회 결의를 통해 채권 발행을 승인한다.",
+    )
+    .unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let bigram = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &bigram,
+        kiwi: None,
+    };
+    pipeline.index_directory(dir.path()).unwrap();
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: None,
+    };
+    let search_for = |query: &str| {
+        search
+            .search(&SearchRequest {
+                query: query.to_string(),
+                mode: SearchMode::Content,
+                limit: 10,
+            })
+            .unwrap()
+            .hits
+    };
+
+    // Ungrouped: AND binds tighter than OR by default, so this is
+    // `건물 OR (채권 AND 결의)` — both documents satisfy one side or the other.
+    let ungrouped = search_for("건물 OR 채권 AND 결의");
+    assert_eq!(ungrouped.len(), 2, "hits: {:?}", ungrouped);
+
+    // Grouped: `(건물 OR 채권) AND 결의` requires "결의" no matter what, which
+    // "공사.txt" doesn't have — only "이사회.txt" should match.
+    let grouped = search_for("(건물 OR 채권) AND 결의");
+    assert_eq!(grouped.len(), 1, "hits: {:?}", grouped);
+    assert_eq!(grouped[0].filename, "이사회.txt");
+}
+
+#[test]
 fn filename_search_populates_metadata_fields() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("규정.txt"), "본문은 검색 대상이 아니다.").unwrap();

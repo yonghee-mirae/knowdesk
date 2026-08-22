@@ -56,10 +56,16 @@ pub fn parse(input: &str) -> ParsedQuery {
 
 /// Determines whether `term` is a "plain search term" that's safe to run
 /// through morphological analysis. Phrases ("..."), prefix search (발행*),
-/// and AND/OR/NOT operators must be left as FTS5 syntax, so they're excluded
-/// from analysis.
+/// AND/OR/NOT operators, and grouping parentheses must be left as FTS5
+/// syntax, so they're excluded from analysis — wrapping a term like `(건물`
+/// in `(term OR morph_kiwi:(...))` would nest the user's own grouping
+/// paren inside ours and corrupt it.
 pub fn is_plain_keyword(term: &str) -> bool {
-    !term.starts_with('"') && !term.ends_with('*') && !matches!(term, "AND" | "OR" | "NOT")
+    !term.starts_with('"')
+        && !term.ends_with('*')
+        && !term.contains('(')
+        && !term.contains(')')
+        && !matches!(term, "AND" | "OR" | "NOT")
 }
 
 /// Passing a plain search term containing characters that have special
@@ -68,6 +74,18 @@ pub fn is_plain_keyword(term: &str) -> bool {
 /// a syntax error (confirmed in practice). Such terms are wrapped whole in a
 /// phrase ("...") so they're treated as literals. Phrases/AND·OR·NOT/prefix
 /// search (`발행*`) are left untouched since they must stay as FTS5 syntax.
+///
+/// `(`/`)` are also left unquoted rather than folded into that literal-phrase
+/// escaping — they're FTS5's own grouping syntax (`(a OR b) AND c`), not
+/// incidental punctuation. Quoting them used to silently defeat grouping: our
+/// own tokenizer only splits on whitespace, so `(건물` stayed one token and
+/// got wrapped as a literal phrase `"(건물"`; FTS5 then tokenizes phrase
+/// content the same way it tokenizes indexed text, which strips the `(` as
+/// punctuation — so the phrase silently degraded to matching bare `건물`, and
+/// the grouping just vanished with no error (confirmed in practice: `(a OR b)
+/// AND c` and `a OR b AND c` returned identical results). Leaving `(`/`)`
+/// unquoted lets FTS5's own query-syntax lexer see them as real grouping
+/// tokens when the final match string reaches it.
 fn sanitize_term(term: &str) -> String {
     if term.starts_with('"') || matches!(term, "AND" | "OR" | "NOT") {
         return term.to_string();
@@ -77,7 +95,7 @@ fn sanitize_term(term: &str) -> String {
             return term.to_string();
         }
     }
-    if is_safe_bareword(term) {
+    if is_safe_bareword_or_grouping(term) {
         term.to_string()
     } else {
         format!("\"{}\"", term.replace('"', "\"\""))
@@ -88,6 +106,14 @@ fn sanitize_term(term: &str) -> String {
 /// of letters/digits/underscore).
 fn is_safe_bareword(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Same as `is_safe_bareword`, but also allows `(`/`)` through unquoted so
+/// FTS5's own grouping syntax survives (see `sanitize_term`).
+fn is_safe_bareword_or_grouping(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '(' || c == ')')
 }
 
 /// Splits on whitespace, but keeps `"..."` phrases as a single token.
@@ -155,6 +181,28 @@ mod tests {
     fn keeps_plain_english_and_korean_barewords_unquoted() {
         assert_eq!(parse("KOSPI GDP").match_expr, "KOSPI GDP");
         assert_eq!(parse("채권").match_expr, "채권");
+    }
+
+    #[test]
+    fn keeps_grouping_parens_unquoted() {
+        // Real bug, confirmed against the actual FTS5 index: quoting `(건물` as a
+        // literal phrase made FTS5's own tokenizer strip the `(` as punctuation,
+        // silently degrading it to a bare `건물` match and defeating the grouping —
+        // with no error, so it looked like ordinary (wrong) results rather than a
+        // failure. Parens must reach FTS5 unquoted to work as real grouping syntax.
+        assert_eq!(
+            parse("(건물 OR 채권) AND 결의").match_expr,
+            "(건물 OR 채권) AND 결의"
+        );
+    }
+
+    #[test]
+    fn excludes_grouping_parens_from_kiwi_analysis() {
+        // A term containing a grouping paren must not be treated as a plain keyword —
+        // wrapping it in `(term OR morph_kiwi:(...))` for query expansion would nest
+        // the user's own grouping paren inside ours and corrupt the expression.
+        assert!(!is_plain_keyword("(건물"));
+        assert!(!is_plain_keyword("채권)"));
     }
 
     #[test]

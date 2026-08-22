@@ -111,7 +111,7 @@ npm --prefix frontend install
 KNOWDESK_DB_PATH="$(pwd)/samples.db" npm run tauri dev
 ```
 
-키보드: `↑`/`↓` 이동, `Enter` 열기, `Ctrl+Enter` 폴더 열기, `Ctrl+C` 경로 복사, `Ctrl+Tab`/`Ctrl+1`/`Ctrl+2` 내용·파일명 모드 전환, `Esc` 창 숨김.
+키보드: `↑`/`↓` 이동, `Enter` 열기, `Ctrl+Enter` 폴더 열기, `Ctrl+C` 경로 복사, `Ctrl+1`/`Ctrl+2` 내용·파일명 모드 전환, `Esc` 창 숨김. macOS에서는 `Ctrl` 대신 `Cmd`도 동일하게 동작하며, 화면에 표시되는 힌트도 실행 플랫폼에 맞춰 `⌘`로 바뀐다(`frontend/src/core/platform.ts`).
 
 프로토타입에서 확정된 요소 중 실제 UI에 반영된 것: 검색 문법 도움말 패널(검색어가 비어 있을 때 결과 리스트 자리에 전체 폭으로 표시), 다크모드 토글 버튼, 결과 항목의 경로(meta-line) 표시, "결과 없음" 2단 안내 문구, 창을 둥근 모서리로 띄우는 플로팅 카드 룩(투명 창 + CSS `box-shadow` — macOS 네이티브 창 그림자는 웹뷰 투명도와 무관하게 창 프레임 전체를 사각형으로 그리므로 꺼두고 대체했다, `frontend/src/styles/layout.css` 참조).
 

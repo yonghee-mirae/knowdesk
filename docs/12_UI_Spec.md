@@ -75,7 +75,7 @@ C1 레이아웃의 우측 패널. 별도 화면이 아니라 결과 리스트 �
 
 하이라이트 우선순위는 기존 구현대로: 리터럴 검색어 → Kiwi 분석 어간 → 형태소 위치(`Tokenizer::locate`). UI는 백엔드가 준 위치 정보를 그대로 렌더링한다.
 
-> **구현 전제 조건(이 문서 작성 중 발견):** 현재 `SearchHit`(`core/src/search/mod.rs`)엔 `path`/`filename`/`snippet`/`rank`/`match_kind`만 있고, 수정일·확장자·`index_tier`가 없다. `documents`/`paths` 테이블엔 이미 있는 값이라 조회 자체는 가능하지만, Preview Pane·결과 리스트의 tier 배지를 구현하려면 `SearchHit`/`SearchRow` 확장(또는 별도 조회)이 선행돼야 한다. TASK-702/703 범위에 포함해서 잡을지 확인 필요.
+> **구현 전제 조건 — 해결됨 (2026-08-22):** `SearchHit`/`SearchRow`(`core/src/search/mod.rs`, `core/src/db/search_repo.rs`)에 `extension`/`modified_at`/`index_tier`를 추가했다 — `search_filename`/`search_content` SQL이 이미 조인하던 `paths`/`documents` 컬럼을 SELECT에 포함시키기만 하면 됐다(추가 조인 없음). `filename_search_populates_metadata_fields`(`core/tests/index_search.rs`)로 검증. TASK-702/703에서 이 필드들을 그대로 쓰면 된다. (크기는 여전히 미포함 — Meta Index 미리보기에 필요하면 문서 열람 시점에 `documents.file_size`를 별도 조회하는 것으로 충분해 보이나, 확정은 아님.)
 
 ---
 

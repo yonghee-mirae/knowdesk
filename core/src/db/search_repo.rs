@@ -25,6 +25,9 @@ pub struct SearchRow {
     /// Only populated in content mode — needed later to determine whether the hit came
     /// from query expansion (`morph_kiwi`) matching (`search::service`).
     pub document_id: Option<String>,
+    pub extension: String,
+    pub modified_at: Option<String>,
+    pub index_tier: String,
 }
 
 pub struct SearchRepository;
@@ -87,7 +90,8 @@ impl SearchRepository {
         limit: i64,
     ) -> rusqlite::Result<Vec<SearchRow>> {
         let mut sql = String::from(
-            "SELECT f.path, f.filename, NULL, bm25(filename_fts)
+            "SELECT f.path, f.filename, NULL, bm25(filename_fts),
+                    p.extension, p.modified_at, d.index_tier
              FROM filename_fts f
              JOIN paths p ON p.path = f.path
              JOIN documents d ON d.document_id = p.document_id
@@ -116,7 +120,8 @@ impl SearchRepository {
             "SELECT p.path, p.filename,
                     snippet(content_fts, 0, '>>', '<<', '...', 12),
                     bm25(content_fts, ?, ?, ?),
-                    content_fts.document_id
+                    content_fts.document_id,
+                    p.extension, p.modified_at, d.index_tier
              FROM content_fts
              JOIN documents d ON d.document_id = content_fts.document_id
              JOIN paths p ON p.document_id = d.document_id
@@ -144,6 +149,9 @@ impl SearchRepository {
                     snippet: row.get(2)?,
                     rank: row.get(3)?,
                     document_id: Some(document_id),
+                    extension: row.get(5)?,
+                    modified_at: row.get(6)?,
+                    index_tier: row.get(7)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -226,6 +234,9 @@ fn run_search_query(
                 snippet: row.get(2)?,
                 rank: row.get(3)?,
                 document_id: None,
+                extension: row.get(4)?,
+                modified_at: row.get(5)?,
+                index_tier: row.get(6)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;

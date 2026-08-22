@@ -60,6 +60,46 @@ fn indexes_sample_folder_and_finds_snippet() {
     let hit = &result.hits[0];
     assert_eq!(hit.filename, "규정.txt");
     assert!(hit.snippet.as_deref().unwrap().contains(">>"));
+    assert_eq!(hit.extension, "txt");
+    assert_eq!(hit.index_tier, "FULL");
+    assert!(hit.modified_at.is_some());
+}
+
+#[test]
+fn filename_search_populates_metadata_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("규정.txt"), "본문은 검색 대상이 아니다.").unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let tokenizer = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &tokenizer,
+        kiwi: None,
+    };
+    pipeline.index_directory(dir.path()).unwrap();
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: None,
+    };
+    let result = search
+        .search(&SearchRequest {
+            query: "규정".to_string(),
+            mode: SearchMode::Filename,
+            limit: 10,
+        })
+        .unwrap();
+
+    assert_eq!(result.hits.len(), 1);
+    let hit = &result.hits[0];
+    assert_eq!(hit.extension, "txt");
+    assert_eq!(hit.index_tier, "FULL");
+    assert!(hit.modified_at.is_some());
 }
 
 #[test]

@@ -36,6 +36,12 @@ pub struct SearchHit {
     pub snippet: Option<String>,
     pub rank: f64,
     pub match_kind: MatchKind,
+    pub extension: String,
+    /// RFC3339 timestamp string, as stored in `paths.modified_at`.
+    pub modified_at: Option<String>,
+    /// `FULL` | `META` | `SKIP` (`docs/04_Data_Model.md`) — lets the UI show a
+    /// "content not indexed" badge for `META` hits instead of a snippet.
+    pub index_tier: String,
 }
 
 #[derive(Debug, Clone)]

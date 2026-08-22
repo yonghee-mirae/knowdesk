@@ -134,6 +134,9 @@ fn to_hit(row: SearchRow, match_kind: MatchKind) -> SearchHit {
         snippet: row.snippet,
         rank: row.rank,
         match_kind,
+        extension: row.extension,
+        modified_at: row.modified_at,
+        index_tier: row.index_tier,
     }
 }
 

@@ -17,7 +17,18 @@ use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WindowEvent};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
+
+/// `docs/12_UI_Spec.md` C4/C5's settings mockup shows `Ctrl+Alt+Space` as the
+/// placeholder default - not yet user-changeable since there's no Settings
+/// Window (TASK-704) to change it from. `CmdOrCtrl` maps that to `⌘+Alt+Space`
+/// on macOS, `Ctrl+Alt+Space` elsewhere.
+///
+/// ⚠️ O-7 (`KnowDesk_추가검토사항.md`) - whether global-hotkey hooking is
+/// allowed by IT security policy on the target Windows fleet - is still
+/// unconfirmed. This default is provisional pending that review.
+const DEFAULT_HOTKEY: &str = "CmdOrCtrl+Alt+Space";
 
 /// A search request sent to the dedicated worker thread (see `SearchWorker`).
 struct SearchJob {
@@ -195,6 +206,22 @@ fn show_search_window(app: &AppHandle) {
     }
 }
 
+/// The global hotkey's action: shows the search window, or hides it again if
+/// it's already visible (Spotlight/PowerToys Run convention -
+/// `docs/12_UI_Spec.md` C4: "이미 열려 있는 검색창에서 단축키를 다시 누르면 →
+/// 토글(다시 누르면 닫힘)"). Unlike the tray icon's left click
+/// (`show_search_window`), which always just reveals it.
+fn toggle_search_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("search") {
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+        } else {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let db_path = db_path();
@@ -207,6 +234,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(worker)
         .invoke_handler(tauri::generate_handler![
             search,
@@ -262,6 +290,17 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // TASK-802: registered here (app-level setup), not via the
+            // plugin builder's `.with_shortcut()` - that runs before the app
+            // handle exists, so a parse failure there can't surface through
+            // the normal `?` error path the way it can here.
+            app.global_shortcut()
+                .on_shortcut(DEFAULT_HOTKEY, |app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        toggle_search_window(app);
+                    }
+                })?;
 
             Ok(())
         })

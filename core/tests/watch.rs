@@ -187,8 +187,15 @@ fn watch_ignores_short_lived_temp_file_from_office_style_save() {
 
     let watcher = FileWatcher::new(dir.path(), DEBOUNCE).unwrap();
 
-    let temp_path = dir.path().join("~$규정.txt");
-    let real_path = dir.path().join("규정.txt");
+    // Canonicalize before building the expected paths below: on macOS, `notify`'s
+    // FSEvents backend reports paths resolved through `/var` -> `/private/var` (a
+    // system symlink), while `dir.path()` itself is not resolved. Comparing the
+    // unresolved form against event paths from `queue::drain` below would then never
+    // match, even though the file was correctly detected and indexed. This is a no-op
+    // on platforms without such a symlink (e.g. Linux).
+    let dir_path = dir.path().canonicalize().unwrap();
+    let temp_path = dir_path.join("~$규정.txt");
+    let real_path = dir_path.join("규정.txt");
     std::fs::write(&temp_path, "임시").unwrap();
     std::fs::remove_file(&temp_path).unwrap();
     std::fs::write(&real_path, "본 문서는 채권 발행 절차를 규정한다.").unwrap();

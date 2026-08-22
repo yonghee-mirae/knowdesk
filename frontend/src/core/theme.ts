@@ -1,53 +1,36 @@
-// Dark-mode toggle (approved prototype). The OS setting (`prefers-color-scheme`,
-// via `tokens.css`) is the default; this only persists an explicit override.
+// Color theme, read from `settings.json`'s `theme` field (`core::config::Theme`
+// on the backend) rather than a toggle button - there is none anymore. `system`
+// (the default) means no explicit override; `tokens.css`'s `prefers-color-scheme`
+// media query then decides.
 
-const STORAGE_KEY = 'knowdesk-theme';
+import { getTheme } from '../platform/backend';
 
-export type Theme = 'light' | 'dark';
+export type Theme = 'light' | 'dark' | 'system';
 
-function readStorage(): Theme | null {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored === 'light' || stored === 'dark' ? stored : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeStorage(theme: Theme | null): void {
-  try {
-    if (theme) localStorage.setItem(STORAGE_KEY, theme);
-    else localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // Best-effort - a per-viewer convenience, not something that must persist reliably.
-  }
-}
-
-/** Applies (or clears) an explicit override on `<html data-theme>` - `tokens.css`'s
- * `:root[data-theme]` rules pick this up over the OS setting. */
-export function applyTheme(theme: Theme | null): void {
-  if (theme) {
-    document.documentElement.dataset['theme'] = theme;
-  } else {
+/** Applies (or clears, for `'system'`) an explicit override on `<html
+ * data-theme>` - `tokens.css`'s `:root[data-theme]` rules pick this up over
+ * the OS setting. */
+export function applyTheme(theme: Theme): void {
+  if (theme === 'system') {
     delete document.documentElement.dataset['theme'];
+  } else {
+    document.documentElement.dataset['theme'] = theme;
   }
 }
 
-/** Loads and applies whatever override (if any) was saved from a previous session. */
-export function initTheme(): void {
-  applyTheme(readStorage());
-}
-
-/** The theme actually in effect right now - the stored override, or the OS
- * setting if there isn't one. */
-export function effectiveTheme(): Theme {
-  return readStorage() ?? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-}
-
-/** Flips the current effective theme and persists it as an explicit override. */
-export function toggleTheme(): Theme {
-  const next: Theme = effectiveTheme() === 'dark' ? 'light' : 'dark';
-  writeStorage(next);
-  applyTheme(next);
-  return next;
+/** Reads `theme` from `settings.json` (via the backend) and applies it.
+ * Called once at page load, and again every time the search window regains
+ * focus - the window is created once and just shown/hidden for the rest of
+ * the app's life, so re-checking on focus is what makes a hand-edited theme
+ * setting actually take effect without needing a push-based update. Falls
+ * back to `system` if the read fails for any reason. */
+export async function loadAndApplyTheme(): Promise<void> {
+  let theme: Theme = 'system';
+  try {
+    theme = await getTheme();
+  } catch {
+    // Best-effort - an unreadable/corrupt settings.json shouldn't block the
+    // rest of the window from working, just fall back to the OS setting.
+  }
+  applyTheme(theme);
 }

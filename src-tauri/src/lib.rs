@@ -2,7 +2,7 @@
 // (`CLAUDE.md`: "core는 Tauri를 절대 참조하지 않는다. 모든 OS 통합은 src-tauri로 격리한다").
 // `open_path`/`open_parent_folder` are the exception (native opener, no equivalent in `core`).
 
-use knowdesk_core::config::Config;
+use knowdesk_core::config::{Config, Theme};
 use knowdesk_core::db::Db;
 use knowdesk_core::extract::ooxml::{DocxExtractor, PptxExtractor};
 use knowdesk_core::extract::pdf::PdfExtractor;
@@ -238,6 +238,17 @@ fn open_settings_folder(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "No parent folder".to_string())?;
     app.opener()
         .open_path(folder.to_string_lossy().into_owned(), None::<String>)
+        .map_err(|e| e.to_string())
+}
+
+/// Reads the current `theme` setting from `settings.json` - called once at
+/// page load and again every time the search window regains focus (shown via
+/// the tray/hotkey), which is how a hand-edited theme setting takes effect
+/// without needing to push a live-update event into an already-open webview.
+#[tauri::command]
+fn get_theme() -> Result<Theme, String> {
+    Config::load(Some(&settings_path()))
+        .map(|config| config.theme)
         .map_err(|e| e.to_string())
 }
 
@@ -487,6 +498,7 @@ pub fn run() {
             open_path,
             open_parent_folder,
             open_settings_folder,
+            get_theme,
         ])
         .setup(|app| {
             // The tray is the only thing keeping the app around once the

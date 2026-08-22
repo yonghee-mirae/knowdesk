@@ -9,6 +9,19 @@ pub const DEFAULT_MAX_FILE_SIZE_MB: u64 = 50;
 pub const DEFAULT_EXCLUDED_EXTENSIONS: &[&str] = &["zip", "7z", "rar"];
 pub const DEFAULT_TEMP_PATTERNS: &[&str] = &["~$", ".tmp", ".temp", ".cache"];
 
+/// UI color theme (`frontend/src/core/theme.ts` applies it) - a plain data
+/// value, not a UI concept `core` needs to know the meaning of. `System`
+/// (the default) means "no explicit override, follow the OS setting", same
+/// as never having set a theme at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    Dark,
+    Light,
+    #[default]
+    System,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -26,6 +39,7 @@ pub struct Config {
     /// hand-editing `settings.json` in a text editor. Empty by default:
     /// nothing is indexed until at least one folder is listed here.
     pub watched_folders: Vec<PathBuf>,
+    pub theme: Theme,
 }
 
 impl Default for Config {
@@ -34,6 +48,7 @@ impl Default for Config {
             db_path: PathBuf::from("knowdesk.db"),
             max_file_size_mb: DEFAULT_MAX_FILE_SIZE_MB,
             watched_folders: Vec::new(),
+            theme: Theme::default(),
         }
     }
 }
@@ -133,6 +148,26 @@ mod tests {
         )
         .unwrap();
         Config::load(Some(&path)).unwrap();
+    }
+
+    #[test]
+    fn theme_defaults_to_system_and_roundtrips_as_lowercase_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+
+        assert_eq!(Config::default().theme, Theme::System);
+
+        let config = Config {
+            theme: Theme::Dark,
+            ..Config::default()
+        };
+        config.save(&path).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(r#""theme": "dark""#), "got: {text}");
+
+        let reloaded = Config::load(Some(&path)).unwrap();
+        assert_eq!(reloaded.theme, Theme::Dark);
     }
 
     #[test]

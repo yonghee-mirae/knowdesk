@@ -4,7 +4,7 @@ import './components/kd-syntax-help';
 import './components/kd-preview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import * as backend from './platform/backend';
-import { initTheme, effectiveTheme, toggleTheme } from './core/theme';
+import { loadAndApplyTheme } from './core/theme';
 import { MOD_KEY } from './core/platform';
 import type { KdSearchBar } from './components/kd-search-bar';
 import type { KdResultList } from './components/kd-result-list';
@@ -12,7 +12,11 @@ import type { KdSyntaxHelp } from './components/kd-syntax-help';
 import type { KdPreview } from './components/kd-preview';
 import type { SearchHit, SearchMode } from './types';
 
-initTheme();
+void loadAndApplyTheme();
+// Re-checks on every focus (shown via the tray/hotkey) - see
+// `loadAndApplyTheme`'s doc comment for why that's needed instead of a
+// push-based update.
+window.addEventListener('focus', () => void loadAndApplyTheme());
 
 // The footer hint bar's "폴더 열기"/"경로 복사" shortcuts are hardcoded as
 // "Ctrl" in index.html - swap to "⌘" on macOS to match the actual modifier
@@ -172,8 +176,6 @@ function selectIndex(index: number): void {
 
 searchBar.addEventListener('kd-query-input', () => scheduleSearch());
 searchBar.addEventListener('kd-mode-change', (e) => setMode((e as CustomEvent<SearchMode>).detail));
-searchBar.addEventListener('kd-theme-toggle', () => searchBar.setThemeIcon(toggleTheme()));
-searchBar.addEventListener('kd-open-settings', () => void backend.openSettingsFolder());
 resultList.addEventListener('kd-row-click', (e) => selectIndex((e as CustomEvent<number>).detail));
 
 window.addEventListener('keydown', (e) => {
@@ -249,5 +251,4 @@ document.addEventListener('mousedown', (e) => {
 });
 
 showSyntaxHelp();
-searchBar.setThemeIcon(effectiveTheme());
 searchBar.focusInput();

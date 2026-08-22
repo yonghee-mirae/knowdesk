@@ -4,6 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import type { SearchHit, SearchMode } from '../types';
+import type { Theme } from '../core/theme';
 
 export async function search(query: string, mode: SearchMode, limit: number): Promise<SearchHit[]> {
   return invoke<SearchHit[]>('search', { query, mode, limit });
@@ -21,9 +22,7 @@ export async function copyPath(path: string): Promise<void> {
   await writeText(path);
 }
 
-/** "설정" action: there's no in-app Settings window - this opens the folder
- * containing `settings.json` in the OS file manager, so editing that file
- * directly is the whole UI for now. */
-export async function openSettingsFolder(): Promise<void> {
-  await invoke('open_settings_folder');
+/** Reads the `theme` field from `settings.json` (`core::config::Theme`). */
+export async function getTheme(): Promise<Theme> {
+  return invoke<Theme>('get_theme');
 }

@@ -1,3 +1,12 @@
 export KNOWDESK_PDFIUM_LIB_DIR="$(pwd)/.pdfium/lib"
-export KNOWDESK_KIWI_LIB_PATH="$(pwd)/.kiwi/lib/libkiwi.so"
+
+case "$(uname -s)" in
+    Darwin)
+        export KNOWDESK_KIWI_LIB_PATH="$(pwd)/.kiwi/lib/libkiwi.dylib"
+        ;;
+    *)
+        export KNOWDESK_KIWI_LIB_PATH="$(pwd)/.kiwi/lib/libkiwi.so"
+        ;;
+esac
+
 export KNOWDESK_KIWI_MODEL_DIR="$(pwd)/.kiwi/models/cong/base"

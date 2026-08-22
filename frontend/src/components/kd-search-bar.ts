@@ -143,6 +143,13 @@ export class KdSearchBar extends HTMLElement {
     this.inputEl_.focus();
   }
 
+  /** Empties the query input without dispatching `kd-query-input` - the
+   * caller (`main.ts`'s Esc handler) drives the resulting empty-state UI
+   * itself rather than going through the debounced search path. */
+  clear(): void {
+    this.inputEl_.value = '';
+  }
+
   setMode(mode: SearchMode, emit = false): void {
     const isContent = mode === 'content';
     this.contentBtn.classList.toggle('active', isContent);

@@ -130,6 +130,25 @@ async function flushPendingSearch(): Promise<void> {
   }
 }
 
+/** Clears the query and returns to the empty (syntax-help) state - used only
+ * by Esc. Unlike the global hotkey's toggle (which just hides the window via
+ * Rust and leaves the webview's state untouched, so reopening finds the
+ * previous query still there), Esc means "dismiss this search," so it resets
+ * before hiding. Bumping `searchSeq` invalidates any debounced/in-flight
+ * search for the query being cleared, so a slow reply can't land afterwards
+ * and repopulate results the reset just cleared. */
+function resetSearch(): void {
+  if (debounceHandle !== null) {
+    clearTimeout(debounceHandle);
+    debounceHandle = null;
+  }
+  searchSeq++;
+  searchBar.clear();
+  state.hits = [];
+  state.selected = 0;
+  showSyntaxHelp();
+}
+
 function setMode(mode: SearchMode): void {
   if (state.mode === mode) return;
   state.mode = mode;
@@ -211,6 +230,7 @@ window.addEventListener('keydown', (e) => {
 
   if (e.key === 'Escape') {
     e.preventDefault();
+    resetSearch();
     void getCurrentWindow().hide();
   }
 });

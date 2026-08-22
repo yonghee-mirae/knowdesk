@@ -108,7 +108,7 @@ fn main() -> anyhow::Result<()> {
 /// when available and just `None` when it's not — shared between both index
 /// and search.
 fn load_kiwi() -> Option<KiwiTokenizer> {
-    match KiwiTokenizer::from_env() {
+    let kiwi = match KiwiTokenizer::from_env() {
         Some(Ok(kiwi)) => {
             tracing::info!("Using Kiwi morphological analyzer");
             Some(kiwi)
@@ -121,7 +121,16 @@ fn load_kiwi() -> Option<KiwiTokenizer> {
             tracing::info!("Kiwi not configured, using bigram only");
             None
         }
+    };
+    // `tracing` output is only visible when RUST_LOG is set, so unlike the log lines
+    // above, print a notice unconditionally — the user should always know when
+    // morphological search isn't active, not just when they happen to have logging on.
+    if kiwi.is_none() {
+        eprintln!(
+            "Notice: Kiwi morphological analyzer is not available — using bigram tokenization only."
+        );
     }
+    kiwi
 }
 
 fn default_extractors() -> Vec<Box<dyn ContentExtractor>> {

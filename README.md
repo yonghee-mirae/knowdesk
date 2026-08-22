@@ -89,6 +89,6 @@ echo "새 문서" > ./samples/새문서.txt   # 잠시 후 자동 색인됨
 rm ./samples/새문서.txt                # 잠시 후 색인에서도 사라짐
 ```
 
-검색 필터는 `docs/05_Search_Language_v1.md` 문법을 그대로 따른다: `ext:pdf`, `path:리서치`, `tier:full`, `drm:true`, `modified>2026-01-01` 등을 검색어에 함께 넣으면 된다.
+검색 필터는 `docs/05_Search_Language_v1.md` 문법을 그대로 따른다: `x:pdf`, `p:리서치`, `m>2026-01-01`, `m<2026-08-01`, `m=2026-08-10` 등을 검색어에 함께 넣으면 된다.
 
 `--db` 옵션 없이 실행하면 현재 디렉터리에 `knowdesk.db`가 생성되므로, 테스트할 땐 `--db` 경로를 지정해 격리하는 걸 권장한다.

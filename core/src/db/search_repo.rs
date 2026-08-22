@@ -90,7 +90,7 @@ impl SearchRepository {
         limit: i64,
     ) -> rusqlite::Result<Vec<SearchRow>> {
         // FTS5 rejects an empty MATCH string outright ("fts5: syntax error near ''") —
-        // confirmed in practice with e.g. a bare `tier:full`, which leaves no keyword
+        // confirmed in practice with e.g. a bare `x:pdf`, which leaves no keyword
         // once filters are stripped. There's no relevance to rank without a keyword
         // anyway, so skip the virtual table entirely and query `paths`/`documents`
         // directly, filtered-and-browsed rather than searched.
@@ -197,7 +197,7 @@ impl SearchRepository {
     }
 }
 
-/// `search_filename` with no keyword (filters only, e.g. bare `tier:full`). No keyword
+/// `search_filename` with no keyword (filters only, e.g. bare `x:pdf`). No keyword
 /// means no relevance to rank, so this bypasses `filename_fts`/`MATCH` entirely and
 /// browses `paths`/`documents` directly, newest-modified first.
 fn search_filename_filters_only(
@@ -279,17 +279,6 @@ fn push_filter_clauses(sql: &mut String, params: &mut Vec<Box<dyn ToSql>>, filte
     if let Some(path_contains) = &filters.path_contains {
         sql.push_str(" AND p.path LIKE '%' || ? || '%'");
         params.push(Box::new(path_contains.clone()));
-    }
-    if let Some(tier) = &filters.tier {
-        sql.push_str(" AND d.index_tier = ?");
-        params.push(Box::new(tier.clone()));
-    }
-    if let Some(drm) = filters.drm {
-        sql.push_str(if drm {
-            " AND d.drm_status = 'DRM'"
-        } else {
-            " AND (d.drm_status IS NULL OR d.drm_status != 'DRM')"
-        });
     }
     if let Some(after) = &filters.modified_after {
         sql.push_str(" AND p.modified_at > ?");
@@ -378,9 +367,9 @@ mod tests {
     #[test]
     fn search_filename_with_only_filters_and_no_keyword_does_not_crash() {
         // Real bug, confirmed against the actual FTS5 index: a filter-only query (e.g.
-        // bare `tier:full`) strips every token, leaving an empty match_expr. FTS5
-        // rejects `MATCH ''` outright ("fts5: syntax error near ''") — there was no way
-        // to browse "everything of this tier/extension" without a keyword.
+        // bare `x:pdf`) strips every token, leaving an empty match_expr. FTS5 rejects
+        // `MATCH ''` outright ("fts5: syntax error near ''") — there was no way to
+        // browse "everything of this extension" without a keyword.
         let db = Db::open_in_memory().unwrap();
         db.conn.execute(
             "INSERT INTO documents (document_id, file_size, text_bytes, index_tier, index_status)
@@ -403,11 +392,11 @@ mod tests {
             [],
         ).unwrap();
 
-        let meta_only = Filters {
-            tier: Some("META".to_string()),
+        let pdf_only = Filters {
+            extension: Some("pdf".to_string()),
             ..Filters::default()
         };
-        let hits = SearchRepository::search_filename(&db.conn, "", &meta_only, 10).unwrap();
+        let hits = SearchRepository::search_filename(&db.conn, "", &pdf_only, 10).unwrap();
         assert_eq!(hits.len(), 1, "hits: {:?}", hits);
         assert_eq!(hits[0].filename, "보안.pdf");
 
@@ -440,11 +429,11 @@ mod tests {
         let hits = SearchRepository::search_content(&db.conn, "", &Filters::default(), 10).unwrap();
         assert_eq!(hits.len(), 1, "hits: {:?}", hits);
 
-        let wrong_tier = Filters {
-            tier: Some("META".to_string()),
+        let wrong_extension = Filters {
+            extension: Some("pdf".to_string()),
             ..Filters::default()
         };
-        let hits = SearchRepository::search_content(&db.conn, "", &wrong_tier, 10).unwrap();
+        let hits = SearchRepository::search_content(&db.conn, "", &wrong_extension, 10).unwrap();
         assert!(hits.is_empty(), "hits: {:?}", hits);
     }
 }

@@ -2,21 +2,24 @@
 //!
 //! Keyword/Phrase/AND/OR/NOT/Prefix are already supported as-is by FTS5 MATCH
 //! syntax, so the job here is to strip out filter tokens
-//! (`ext:`/`path:`/`tier:`/`drm:`/`modified>`/`modified<`/`modified=`) and
-//! pass the rest straight through as an FTS5 MATCH string.
+//! (`x:`/`p:`/`m>`/`m<`/`m=`) and pass the rest straight through as an FTS5
+//! MATCH string.
+//!
+//! Filter prefixes are single-letter (2026-08-22) — users type these by hand, so
+//! `tier:`/`drm:` were removed (index tier/DRM status remain internal fields, just not
+//! user-facing filters — see `KnowDesk_추가검토사항.md`) and the rest shortened:
+//! `ext:` → `x:`, `path:` → `p:`, `modified` → `m`.
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filters {
     pub extension: Option<String>,
     pub path_contains: Option<String>,
-    pub tier: Option<String>,
-    pub drm: Option<bool>,
     pub modified_after: Option<String>,
     pub modified_before: Option<String>,
-    /// Exact calendar-day match, e.g. `modified=2026-08-10`. `paths.modified_at` is a
-    /// full RFC3339 timestamp, so this is compared by calendar day
-    /// (`push_filter_clauses` wraps both sides in SQLite's `date()`), not by exact
-    /// string equality — otherwise it would never match anything.
+    /// Exact calendar-day match, e.g. `m=2026-08-10`. `paths.modified_at` is a full
+    /// RFC3339 timestamp, so this is compared by calendar day (`push_filter_clauses`
+    /// wraps both sides in SQLite's `date()`), not by exact string equality —
+    /// otherwise it would never match anything.
     pub modified_on: Option<String>,
 }
 
@@ -35,19 +38,15 @@ pub fn parse(input: &str) -> ParsedQuery {
     let mut terms = Vec::new();
 
     for token in tokenize(input) {
-        if let Some(rest) = token.strip_prefix("ext:") {
+        if let Some(rest) = token.strip_prefix("x:") {
             filters.extension = Some(rest.trim_start_matches('.').to_lowercase());
-        } else if let Some(rest) = token.strip_prefix("path:") {
+        } else if let Some(rest) = token.strip_prefix("p:") {
             filters.path_contains = Some(rest.to_string());
-        } else if let Some(rest) = token.strip_prefix("tier:") {
-            filters.tier = Some(rest.to_uppercase());
-        } else if let Some(rest) = token.strip_prefix("drm:") {
-            filters.drm = Some(rest.eq_ignore_ascii_case("true"));
-        } else if let Some(rest) = token.strip_prefix("modified>") {
+        } else if let Some(rest) = token.strip_prefix("m>") {
             filters.modified_after = Some(rest.to_string());
-        } else if let Some(rest) = token.strip_prefix("modified<") {
+        } else if let Some(rest) = token.strip_prefix("m<") {
             filters.modified_before = Some(rest.to_string());
-        } else if let Some(rest) = token.strip_prefix("modified=") {
+        } else if let Some(rest) = token.strip_prefix("m=") {
             filters.modified_on = Some(rest.to_string());
         } else {
             terms.push(sanitize_term(&token));
@@ -214,14 +213,10 @@ mod tests {
 
     #[test]
     fn extracts_filters() {
-        let parsed = parse(
-            "채권 ext:pdf path:리서치 tier:full drm:true modified>2026-01-01 modified<2026-08-01 modified=2026-08-10",
-        );
+        let parsed = parse("채권 x:pdf p:리서치 m>2026-01-01 m<2026-08-01 m=2026-08-10");
         assert_eq!(parsed.match_expr, "채권");
         assert_eq!(parsed.filters.extension.as_deref(), Some("pdf"));
         assert_eq!(parsed.filters.path_contains.as_deref(), Some("리서치"));
-        assert_eq!(parsed.filters.tier.as_deref(), Some("FULL"));
-        assert_eq!(parsed.filters.drm, Some(true));
         assert_eq!(parsed.filters.modified_after.as_deref(), Some("2026-01-01"));
         assert_eq!(
             parsed.filters.modified_before.as_deref(),

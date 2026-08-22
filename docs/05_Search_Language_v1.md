@@ -78,12 +78,14 @@ v1.1 개정 — `token_fts` 참조 제거(`04_Data_Model.md`에서 `content_fts(
 
 # Filters
 
-키워드 없이 필터만 써도 된다(예: `tier:meta`만 입력). ⚠️ **수정 이력(2026-08-22):** 한때는 필터만 쓰고 키워드가 없으면 `match_expr`이 빈 문자열이 되어 FTS5가 `MATCH ''`를 구문 오류로 거부했다("fts5: syntax error near ''") — `tier:full`/`ext:pdf` 단독 검색이 전부 에러였다. 키워드가 없으면 애초에 관련도 랭킹(bm25)도 의미가 없으므로, 이 경우 FTS5 가상 테이블을 아예 거치지 않고 `paths`/`documents`를 직접 조회해 최신 수정일 순으로 나열하도록 고쳤다(`core/src/db/search_repo.rs`의 `search_filename_filters_only`/`search_content_filters_only`). `core/src/db/search_repo.rs`의 `search_filename_with_only_filters_and_no_keyword_does_not_crash`/`search_content_with_only_filters_dedupes_by_document`로 검증.
+필터 접두어는 한 글자다(`x:`/`p:`/`m>`/`m<`/`m=`) — 사용자가 직접 타이핑해야 하므로 길면 입력이 번거롭다. ⚠️ **변경 이력(2026-08-22):** 원래 `ext:`/`path:`/`modified` 세 글자 이상이었던 것을 줄였고, `tier:`/`drm:` 필터는 아예 없앴다(진단용으로도 잘 안 쓰여 유지 비용만 있다고 판단 — `KnowDesk_추가검토사항.md` 참조). `documents.index_tier`/`drm_status` 컬럼과 결과 화면의 배지 표시는 그대로 남아 있다 — 검색어로 타이핑해서 걸러내는 기능만 없앤 것이다.
+
+키워드 없이 필터만 써도 된다(예: `x:pdf`만 입력). ⚠️ **수정 이력(2026-08-22):** 한때는 필터만 쓰고 키워드가 없으면 `match_expr`이 빈 문자열이 되어 FTS5가 `MATCH ''`를 구문 오류로 거부했다("fts5: syntax error near ''") — `x:pdf` 단독 검색(당시는 `ext:pdf`)이 전부 에러였다. 키워드가 없으면 애초에 관련도 랭킹(bm25)도 의미가 없으므로, 이 경우 FTS5 가상 테이블을 아예 거치지 않고 `paths`/`documents`를 직접 조회해 최신 수정일 순으로 나열하도록 고쳤다(`core/src/db/search_repo.rs`의 `search_filename_filters_only`/`search_content_filters_only`). `core/src/db/search_repo.rs`의 `search_filename_with_only_filters_and_no_keyword_does_not_crash`/`search_content_with_only_filters_dedupes_by_document`로 검증.
 
 ## Extension
 
 ```text
-ext:pdf
+x:pdf
 ```
 
 ---
@@ -91,27 +93,7 @@ ext:pdf
 ## Path
 
 ```text
-path:리서치
-```
-
----
-
-## Tier
-
-```text
-tier:full
-```
-
-```text
-tier:meta
-```
-
----
-
-## DRM
-
-```text
-drm:true
+p:리서치
 ```
 
 ---
@@ -119,18 +101,18 @@ drm:true
 ## Modified
 
 ```text
-modified>2026-01-01
+m>2026-01-01
 ```
 
 ```text
-modified<2026-08-01
+m<2026-08-01
 ```
 
 ```text
-modified=2026-08-10
+m=2026-08-10
 ```
 
-`modified=`은 특정 날짜 하루에 수정된 문서만 찾는다(추가됨, 2026-08-22). `paths.modified_at`는 시각까지 포함한 전체 타임스탬프라 문자열을 그대로 비교(`=`)하면 절대 일치하지 않는다 — SQL에서 양쪽을 `date(...)`로 감싸 날짜 부분만 비교한다(`core/src/db/search_repo.rs`).
+`m=`은 특정 날짜 하루에 수정된 문서만 찾는다(추가됨, 2026-08-22). `paths.modified_at`는 시각까지 포함한 전체 타임스탬프라 문자열을 그대로 비교(`=`)하면 절대 일치하지 않는다 — SQL에서 양쪽을 `date(...)`로 감싸 날짜 부분만 비교한다(`core/src/db/search_repo.rs`).
 
 ---
 

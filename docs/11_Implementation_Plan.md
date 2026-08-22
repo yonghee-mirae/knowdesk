@@ -192,7 +192,7 @@ cargo test --workspace
 ```bash
 cargo run -p cli -- index ./samples
 cargo run -p cli -- search "채권 발행"
-cargo run -p cli -- search 'ext:pdf path:리서치 modified>2026-01-01'
+cargo run -p cli -- search 'x:pdf p:리서치 m>2026-01-01'
 cargo run -p cli -- stats     # FULL/META/SKIP 건수, 강등 사유별 집계
 ```
 

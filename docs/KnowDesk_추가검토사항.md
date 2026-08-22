@@ -49,6 +49,8 @@ DRM(O-4)을 논외로 한 MVP 범위 평가 결과, 아래 범위 조정을 반�
 | F-02 동의어 사전 | 파일 기반 사전(읽기 전용)으로 축소, 사용자 편집 UI는 Phase 3 | `01_KnowDesk_PRD.md` F-02 반영. D-3 "사용자 등록 기능 제공 여부"는 여전히 미결이나 MVP 범위에서는 제외됨으로써 실질적으로 정리됨 |
 | `tier:`/`drm:` 검색 필터 | 진단용으로 격하 (일반 사용자용 주요 검색 기능이 아님) | DRM 판정 자체가 O-4 실측 전이라 `drm:` 필터의 1차 용도(DRM 문서 걸러내기)가 아직 의미가 크지 않음. 색인 상태 확인용 진단 도구로 취급 |
 
+> **진행 상황 (2026-08-22):** "진단용으로 격하"에서 한 걸음 더 나아가 완전히 제거했다 — 검색 필터는 사용자가 직접 타이핑해야 해서 잘 안 쓰이는 진단용 필터까지 다 유지할 이유가 없다고 판단. `core/src/search/parser.rs`/`core/src/db/search_repo.rs`에서 `Filters.tier`/`Filters.drm` 및 관련 SQL 절 삭제. 이와 함께 나머지 필터 접두어도 `ext:`→`x:`, `path:`→`p:`, `modified`→`m`으로 단축(같은 이유, `05_Search_Language_v1.md` Filters 절 참조). `documents.index_tier`/`drm_status` 컬럼 자체와 결과 화면의 Meta/DRM 배지 표시는 그대로 유지 — 검색어로 타이핑해서 걸러내는 기능만 없앤 것이다.
+
 ---
 
 # Part A. 승인 선결 사항 (Open Issues)

@@ -173,7 +173,6 @@ impl DocumentRepository {
         };
 
         conn.execute("DELETE FROM paths WHERE path = ?1", params![path])?;
-        SearchRepository::remove_filename(conn, path)?;
 
         let remaining: i64 = conn.query_row(
             "SELECT COUNT(*) FROM paths WHERE document_id = ?1",

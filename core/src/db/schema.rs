@@ -56,6 +56,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS filename_fts USING fts5(
     filename,
     path UNINDEXED
 );
+-- Dropped by `db::migrate` MIGRATIONS v2 (`docs/05_Search_Language_v1.md`, Filename
+-- Mode) - filename search moved to a plain SQL substring match on `paths.filename`
+-- instead. Left as-is here rather than edited out, since this is the historical
+-- record of what v1 actually applied.
 
 CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
     body,

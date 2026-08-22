@@ -38,17 +38,10 @@ pub fn parse(input: &str) -> ParsedQuery {
     let mut terms = Vec::new();
 
     for token in tokenize(input) {
-        if let Some(rest) = token.strip_prefix("x:") {
-            filters.extension = Some(rest.trim_start_matches('.').to_lowercase());
-        } else if let Some(rest) = token.strip_prefix("p:") {
-            filters.path_contains = Some(rest.to_string());
-        } else if let Some(rest) = token.strip_prefix("m>") {
-            filters.modified_after = Some(rest.to_string());
-        } else if let Some(rest) = token.strip_prefix("m<") {
-            filters.modified_before = Some(rest.to_string());
-        } else if let Some(rest) = token.strip_prefix("m=") {
-            filters.modified_on = Some(rest.to_string());
-        } else if let Some(op) = normalize_operator(&token) {
+        if apply_filter_token(&token, &mut filters) {
+            continue;
+        }
+        if let Some(op) = normalize_operator(&token) {
             // FTS5's own query syntax requires AND/OR/NOT uppercase - lowercase
             // "and"/"or"/"not" are just ordinary barewords to it, not operators
             // (confirmed in practice: "채권 or 발행" silently found nothing,
@@ -64,6 +57,52 @@ pub fn parse(input: &str) -> ParsedQuery {
         terms,
         filters,
     }
+}
+
+/// Parses a Filename-mode query: filters (`x:`/`p:`/`m>`/`m<`/`m=`) work the
+/// same as `parse()`, but the remaining text becomes plain literal substrings
+/// ("filename contains this") rather than FTS5 MATCH syntax - filename search
+/// doesn't go through FTS5 at all (`core/src/db/search_repo.rs::search_filename`),
+/// so AND/OR/NOT, grouping, phrase quotes (stripped rather than kept as
+/// syntax), and the trailing-`*` prefix wildcard have no special meaning here;
+/// every typed word must simply appear somewhere in the filename, all ANDed
+/// together (`docs/05_Search_Language_v1.md`, Filename Mode).
+pub fn parse_filename(input: &str) -> (Vec<String>, Filters) {
+    let mut filters = Filters::default();
+    let mut needles = Vec::new();
+
+    for token in tokenize(input) {
+        if apply_filter_token(&token, &mut filters) {
+            continue;
+        }
+        let needle = token.trim_matches('"').to_string();
+        if !needle.is_empty() {
+            needles.push(needle);
+        }
+    }
+
+    (needles, filters)
+}
+
+/// Recognizes a `x:`/`p:`/`m>`/`m<`/`m=` filter token and, if it matches,
+/// applies it to `filters`. Shared by `parse()` and `parse_filename()` -
+/// filter syntax is identical in both modes, only the remaining keyword text
+/// is handled differently.
+fn apply_filter_token(token: &str, filters: &mut Filters) -> bool {
+    if let Some(rest) = token.strip_prefix("x:") {
+        filters.extension = Some(rest.trim_start_matches('.').to_lowercase());
+    } else if let Some(rest) = token.strip_prefix("p:") {
+        filters.path_contains = Some(rest.to_string());
+    } else if let Some(rest) = token.strip_prefix("m>") {
+        filters.modified_after = Some(rest.to_string());
+    } else if let Some(rest) = token.strip_prefix("m<") {
+        filters.modified_before = Some(rest.to_string());
+    } else if let Some(rest) = token.strip_prefix("m=") {
+        filters.modified_on = Some(rest.to_string());
+    } else {
+        return false;
+    }
+    true
 }
 
 /// Case-insensitively recognizes AND/OR/NOT (e.g. "and", "Or", "NOT") as an
@@ -245,6 +284,35 @@ mod tests {
         // the user's own grouping paren inside ours and corrupt the expression.
         assert!(!is_plain_keyword("(건물"));
         assert!(!is_plain_keyword("채권)"));
+    }
+
+    #[test]
+    fn parse_filename_extracts_filters_and_plain_needles() {
+        let (needles, filters) = parse_filename("규정 x:pdf p:리서치");
+        assert_eq!(needles, vec!["규정".to_string()]);
+        assert_eq!(filters.extension.as_deref(), Some("pdf"));
+        assert_eq!(filters.path_contains.as_deref(), Some("리서치"));
+    }
+
+    #[test]
+    fn parse_filename_has_no_wildcard_or_boolean_syntax() {
+        // Filename mode dropped FTS5 syntax entirely - a trailing `*` and
+        // AND/OR/NOT keywords are just literal characters/words to search
+        // for now, not a prefix wildcard or boolean operators.
+        let (needles, _) = parse_filename("발행*");
+        assert_eq!(needles, vec!["발행*".to_string()]);
+
+        let (needles, _) = parse_filename("채권 AND 발행");
+        assert_eq!(
+            needles,
+            vec!["채권".to_string(), "AND".to_string(), "발행".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_filename_strips_quotes_from_phrases() {
+        let (needles, _) = parse_filename("\"채권 발행\"");
+        assert_eq!(needles, vec!["채권 발행".to_string()]);
     }
 
     #[test]

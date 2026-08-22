@@ -7,7 +7,13 @@ use rusqlite::Connection;
 use super::schema::SCHEMA_V1;
 
 /// List of (version, SQL to apply). New migrations are appended at the end.
-const MIGRATIONS: &[(i64, &str)] = &[(1, SCHEMA_V1)];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, SCHEMA_V1),
+    // Filename search moved off FTS5 to a plain substring match on `paths.filename`
+    // (`docs/05_Search_Language_v1.md`, Filename Mode) - `filename_fts` is no longer
+    // read or written anywhere, so drop it.
+    (2, "DROP TABLE IF EXISTS filename_fts;"),
+];
 
 pub fn run(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
@@ -54,6 +60,23 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
+    }
+
+    #[test]
+    fn drops_filename_fts_left_over_from_v1() {
+        // v1 still creates `filename_fts` (historical record of what it actually
+        // applied) - v2 must clean it up since filename search no longer uses it.
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'filename_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 0);
     }
 }

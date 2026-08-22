@@ -161,6 +161,132 @@ fn filename_search_populates_metadata_fields() {
 }
 
 #[test]
+fn filename_search_matches_substring_anywhere_in_the_name() {
+    let dir = tempfile::tempdir().unwrap();
+    // "보고서" sits in the middle of the filename, not at a token boundary a
+    // plain FTS5 MATCH would isolate on its own — exactly the case the old
+    // trailing-wildcard-only FTS5 lookup couldn't find without a `*`.
+    std::fs::write(
+        dir.path().join("재무보고서_v2.txt"),
+        "본문은 검색 대상이 아니다.",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("무관.txt"), "본문은 검색 대상이 아니다.").unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let tokenizer = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &tokenizer,
+        kiwi: None,
+    };
+    pipeline.index_directory(dir.path()).unwrap();
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: None,
+    };
+    let result = search
+        .search(&SearchRequest {
+            query: "보고서".to_string(),
+            mode: SearchMode::Filename,
+            limit: 10,
+        })
+        .unwrap();
+
+    assert_eq!(result.hits.len(), 1, "hits: {:?}", result.hits);
+    assert_eq!(result.hits[0].filename, "재무보고서_v2.txt");
+}
+
+#[test]
+fn filename_search_requires_every_word_to_be_a_substring() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("재무_2026_보고서.txt"),
+        "본문은 검색 대상이 아니다.",
+    )
+    .unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let tokenizer = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &tokenizer,
+        kiwi: None,
+    };
+    pipeline.index_directory(dir.path()).unwrap();
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: None,
+    };
+    // Both words appear in the filename (in either order relative to how
+    // they're typed) - each becomes its own substring requirement, ANDed.
+    let result = search
+        .search(&SearchRequest {
+            query: "보고서 재무".to_string(),
+            mode: SearchMode::Filename,
+            limit: 10,
+        })
+        .unwrap();
+    assert_eq!(result.hits.len(), 1, "hits: {:?}", result.hits);
+
+    // A word that isn't in the filename at all must exclude it, even though
+    // the other word matches.
+    let result = search
+        .search(&SearchRequest {
+            query: "재무 없음".to_string(),
+            mode: SearchMode::Filename,
+            limit: 10,
+        })
+        .unwrap();
+    assert!(result.hits.is_empty(), "hits: {:?}", result.hits);
+}
+
+#[test]
+fn filename_search_no_longer_treats_trailing_star_as_a_wildcard() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("규정.txt"), "본문은 검색 대상이 아니다.").unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let tokenizer = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &tokenizer,
+        kiwi: None,
+    };
+    pipeline.index_directory(dir.path()).unwrap();
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: None,
+    };
+    // "규정*" used to be FTS5 prefix-wildcard syntax; filename mode now treats
+    // the `*` as a literal character, so a filename with no literal `*` in it
+    // no longer matches.
+    let result = search
+        .search(&SearchRequest {
+            query: "규정*".to_string(),
+            mode: SearchMode::Filename,
+            limit: 10,
+        })
+        .unwrap();
+    assert!(result.hits.is_empty(), "hits: {:?}", result.hits);
+}
+
+#[test]
 fn indexes_xlsx_file_and_finds_snippet() {
     let dir = tempfile::tempdir().unwrap();
     let mut workbook = rust_xlsxwriter::Workbook::new();

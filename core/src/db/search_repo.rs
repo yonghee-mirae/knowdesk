@@ -1,4 +1,5 @@
-//! Indexing and querying for `filename_fts` / `content_fts`.
+//! Indexing and querying for `content_fts`, plus the plain-substring filename search
+//! (`search_filename`) that queries `paths`/`documents` directly instead.
 //!
 //! bm25 column weights: `body` dominates, with `morph` (bigram, the default tokenizer,
 //! always populated) and `morph_kiwi` (Kiwi, the secondary tokenizer, populated only when
@@ -33,24 +34,6 @@ pub struct SearchRow {
 pub struct SearchRepository;
 
 impl SearchRepository {
-    /// Index a filename. If the same path already exists, delete and re-insert it
-    /// (fts5 has no UNIQUE constraint).
-    pub fn index_filename(conn: &Connection, path: &str, filename: &str) -> rusqlite::Result<()> {
-        conn.execute("DELETE FROM filename_fts WHERE path = ?1", params![path])?;
-        conn.execute(
-            "INSERT INTO filename_fts (filename, path) VALUES (?1, ?2)",
-            params![filename, path],
-        )?;
-        Ok(())
-    }
-
-    /// Removes the filename index entry for a single path (used when watching for file
-    /// deletion/move).
-    pub fn remove_filename(conn: &Connection, path: &str) -> rusqlite::Result<()> {
-        conn.execute("DELETE FROM filename_fts WHERE path = ?1", params![path])?;
-        Ok(())
-    }
-
     /// Removes the content index entry for a single document (called by
     /// `DocumentRepository::remove_path` for cleanup, when no path referencing this
     /// document remains).
@@ -83,32 +66,45 @@ impl SearchRepository {
         Ok(())
     }
 
+    /// `needles` are plain literal substrings (`search::parser::parse_filename`) -
+    /// a filename matches only if it contains every one of them, case-insensitively
+    /// (ANDed). Filenames aren't indexed with FTS5 at all (the old `filename_fts`
+    /// table was dropped, `db::migrate` MIGRATIONS v2): FTS5 only supports
+    /// trailing-prefix wildcard search (`발행*`) and otherwise matches whole
+    /// tokens, which for CJK filenames with no natural word boundaries often
+    /// means "the whole filename" rather than any substring within it. A plain
+    /// SQL `LIKE '%...%'` has no such limitation.
     pub fn search_filename(
         conn: &Connection,
-        match_expr: &str,
+        needles: &[String],
         filters: &Filters,
         limit: i64,
     ) -> rusqlite::Result<Vec<SearchRow>> {
-        // FTS5 rejects an empty MATCH string outright ("fts5: syntax error near ''") —
-        // confirmed in practice with e.g. a bare `x:pdf`, which leaves no keyword
-        // once filters are stripped. There's no relevance to rank without a keyword
-        // anyway, so skip the virtual table entirely and query `paths`/`documents`
-        // directly, filtered-and-browsed rather than searched.
-        if match_expr.trim().is_empty() {
+        // No keyword (e.g. a bare `x:pdf`) - there's no relevance to rank
+        // anyway, so just browse `paths`/`documents` directly.
+        if needles.is_empty() {
             return search_filename_filters_only(conn, filters, limit);
         }
 
         let mut sql = String::from(
-            "SELECT f.path, f.filename, NULL, bm25(filename_fts),
+            "SELECT p.path, p.filename, NULL, 0.0,
                     p.extension, p.modified_at, d.index_tier
-             FROM filename_fts f
-             JOIN paths p ON p.path = f.path
+             FROM paths p
              JOIN documents d ON d.document_id = p.document_id
-             WHERE filename_fts MATCH ?",
+             WHERE 1 = 1",
         );
-        let mut sql_params: Vec<Box<dyn ToSql>> = vec![Box::new(match_expr.to_string())];
+        let mut sql_params: Vec<Box<dyn ToSql>> = Vec::new();
+        for needle in needles {
+            // ESCAPE '\' so a needle containing a literal `%`/`_` (SQL LIKE's
+            // own wildcard characters) is matched literally rather than as a
+            // wildcard.
+            sql.push_str(" AND p.filename LIKE ('%' || ? || '%') ESCAPE '\\'");
+            sql_params.push(Box::new(escape_like(needle)));
+        }
         push_filter_clauses(&mut sql, &mut sql_params, filters);
-        sql.push_str(" ORDER BY 4 LIMIT ?");
+        // No FTS5 bm25 rank to sort by anymore - shorter filenames are a
+        // reasonable proxy for "tighter" matches, with recency as a tiebreak.
+        sql.push_str(" ORDER BY LENGTH(p.filename) ASC, p.modified_at DESC LIMIT ?");
         sql_params.push(Box::new(limit));
 
         run_search_query(conn, &sql, &sql_params)
@@ -179,8 +175,8 @@ impl SearchRepository {
 }
 
 /// `search_filename` with no keyword (filters only, e.g. bare `x:pdf`). No keyword
-/// means no relevance to rank, so this bypasses `filename_fts`/`MATCH` entirely and
-/// browses `paths`/`documents` directly, newest-modified first.
+/// means no relevance to rank, so this just browses `paths`/`documents` directly,
+/// newest-modified first.
 fn search_filename_filters_only(
     conn: &Connection,
     filters: &Filters,
@@ -250,6 +246,17 @@ fn dedupe_by_document_id(rows: Vec<SearchRow>, limit: i64) -> Vec<SearchRow> {
         .filter(|row| seen.insert(row.document_id.clone()))
         .take(limit as usize)
         .collect()
+}
+
+/// Escapes SQL LIKE's own wildcard characters (`%`, `_`) and the escape
+/// character itself in a needle, so a filename containing one of them
+/// literally is matched as literal text, not as a LIKE wildcard. Paired with
+/// `ESCAPE '\'` in the query.
+fn escape_like(needle: &str) -> String {
+    needle
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 fn push_filter_clauses(sql: &mut String, params: &mut Vec<Box<dyn ToSql>>, filters: &Filters) {
@@ -328,20 +335,20 @@ mod tests {
                 [],
             )
             .unwrap();
-        SearchRepository::index_filename(&db.conn, "/a/규정.txt", "규정.txt").unwrap();
 
         let same_day = Filters {
             modified_on: Some("2026-08-10".to_string()),
             ..Filters::default()
         };
-        let hits = SearchRepository::search_filename(&db.conn, "규정", &same_day, 10).unwrap();
+        let needles = ["규정".to_string()];
+        let hits = SearchRepository::search_filename(&db.conn, &needles, &same_day, 10).unwrap();
         assert_eq!(hits.len(), 1, "hits: {:?}", hits);
 
         let other_day = Filters {
             modified_on: Some("2026-08-11".to_string()),
             ..Filters::default()
         };
-        let hits = SearchRepository::search_filename(&db.conn, "규정", &other_day, 10).unwrap();
+        let hits = SearchRepository::search_filename(&db.conn, &needles, &other_day, 10).unwrap();
         assert!(hits.is_empty(), "hits: {:?}", hits);
     }
 
@@ -377,13 +384,13 @@ mod tests {
             extension: Some("pdf".to_string()),
             ..Filters::default()
         };
-        let hits = SearchRepository::search_filename(&db.conn, "", &pdf_only, 10).unwrap();
+        let hits = SearchRepository::search_filename(&db.conn, &[], &pdf_only, 10).unwrap();
         assert_eq!(hits.len(), 1, "hits: {:?}", hits);
         assert_eq!(hits[0].filename, "보안.pdf");
 
         // No filters at all either — should just list everything, not crash.
         let hits =
-            SearchRepository::search_filename(&db.conn, "", &Filters::default(), 10).unwrap();
+            SearchRepository::search_filename(&db.conn, &[], &Filters::default(), 10).unwrap();
         assert_eq!(hits.len(), 2, "hits: {:?}", hits);
     }
 

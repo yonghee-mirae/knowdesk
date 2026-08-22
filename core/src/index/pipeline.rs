@@ -104,7 +104,6 @@ impl<'a> IndexPipeline<'a> {
                 modified_at,
             },
         )?;
-        SearchRepository::index_filename(self.conn, &path.to_string_lossy(), &filename)?;
 
         Ok(tier)
     }

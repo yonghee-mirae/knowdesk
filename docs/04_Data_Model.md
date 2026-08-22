@@ -57,12 +57,12 @@ CREATE TABLE paths
 
 # FTS Tables
 
-## filename_fts
+## filename_fts (제거됨)
 
-파일명 검색 전용.
+⚠️ **변경 이력(2026-08-22):** 파일명 검색이 순수 부분 문자열("포함") 검색(SQL `LIKE`, `paths.filename` 직접 조회)으로 바뀌면서 더 이상 검색 경로에서 쓰이지 않게 되어(`05_Search_Language_v1.md` Filename Mode 참조), 테이블 자체와 색인 코드(`SearchRepository::index_filename`/`remove_filename`)를 정리했다. `db::migrate` MIGRATIONS v2가 기존 DB에서도 `DROP TABLE IF EXISTS filename_fts`로 정리한다. 아래 `CREATE VIRTUAL TABLE`은 v1이 실제로 적용했던 내용의 역사적 기록으로 `core/src/db/schema.rs`에 그대로 남아있다(마이그레이션은 과거 버전을 고쳐 쓰지 않는다).
 
 ```sql
-CREATE VIRTUAL TABLE filename_fts USING fts5(filename);
+CREATE VIRTUAL TABLE filename_fts USING fts5(filename);  -- v1에서 생성, v2에서 DROP
 ```
 
 ---

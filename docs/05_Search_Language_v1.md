@@ -50,7 +50,7 @@ v1.1 개정 — `token_fts` 참조 제거(`04_Data_Model.md`에서 `content_fts(
 발행*
 ```
 
-뒤쪽에 붙는 접두(prefix) 형태만 지원한다. `*발행`(앞쪽)이나 `*발행*`(양쪽)은 와일드카드로 동작하지 않는다 — 아래 Limitations 참조.
+Content Mode에서만 유효하다(FTS5 MATCH 문법). 뒤쪽에 붙는 접두(prefix) 형태만 지원한다. `*발행`(앞쪽)이나 `*발행*`(양쪽)은 와일드카드로 동작하지 않는다 — 아래 Limitations 참조. Filename Mode는 FTS5를 전혀 쓰지 않아 `*`가 그냥 리터럴 문자로 취급된다 — 아래 Filename Mode 참조.
 
 ---
 
@@ -122,7 +122,13 @@ m=2026-08-10
 
 ## Filename Mode
 
-filename_fts만 대상
+⚠️ **변경 이력(2026-08-22):** FTS5(`filename_fts`)를 아예 거치지 않는 순수 부분 문자열("포함") 검색으로 바뀌었다 — `core/src/db/search_repo.rs::search_filename`(SQL `LIKE '%...%'`), 파싱은 `core/src/search/parser.rs::parse_filename`. 이유: `filename_fts`는 bigram 색인이 없어(`content_fts`와 달리), 한글처럼 띄어쓰기 없는 파일명은 FTS5 토크나이저가 통째로 한 토큰으로 묶어버려 접두(prefix) 와일드카드(`*`) 없이는 파일명 중간에 묻힌 부분 문자열을 못 찾는 문제가 있었다.
+
+- 이 문서 위쪽의 AND/OR/NOT/Grouping/Phrase/Prefix는 전부 FTS5 MATCH 문법이라 **Content Mode에만 적용**된다. Filename Mode는 해당 문법을 전혀 해석하지 않는다.
+- 띄어쓰기로 구분한 단어마다 파일명에 부분 문자열로 포함되는지 확인하고, 전부 만족해야 한다(암묵적 AND) — 예: `보고서 재무`는 `재무_2026_보고서.pdf`에 매치.
+- 따옴표(`"..."`)는 구문(phrase) 연산자가 아니라 그냥 벗겨내고 남은 글자를 그대로 부분 문자열로 쓴다.
+- `*`/`AND`/`OR`/`NOT`/`(`/`)`는 아무 특수 의미가 없다 — 파일명에 그 글자가 실제로 없으면 매치 안 됨.
+- `x:`/`p:`/`m>`/`m<`/`m=` 필터는 Content Mode와 동일하게 그대로 동작한다(필터 추출은 두 모드가 공유).
 
 ---
 
@@ -143,6 +149,8 @@ bm25 컬럼 가중치로 body·morph 두 신호를 조합한다. 별도의 token
 실제 문서("...the terms (see appendix).")로 검증함: 문서에 괄호가 분명히 있어도 `"("` 검색은 결과 없음. Grouping 버그(위 참조)와 근본 원인은 같지만(FTS5가 구두점을 토큰 취급 안 함), 이쪽은 파서를 고쳐서 해결할 수 있는 문제가 아니라 이 검색엔진 구성의 구조적 한계다. 현재로선 해결 계획 없음.
 
 ## 앞쪽·양쪽 와일드카드는 지원하지 않음 (확인됨, 2026-08-22)
+
+**Content Mode(FTS5) 한정.** Filename Mode는 FTS5를 쓰지 않는 순수 부분 문자열 검색이라 이 제약이 없다 — 위 Filename Mode 참조.
 
 FTS5는 뒤쪽 접두(prefix) 와일드카드(`발행*`)만 지원한다. 역색인이 접두사 스캔에만 최적화돼 있어서, `*발행`(앞쪽)이나 `*발행*`(양쪽)처럼 임의 위치를 찾으려면 전문(全文) 스캔이 필요한데 이는 정규표현식을 지원하지 않는 것과 같은 이유(`01_KnowDesk_PRD.md` 5장)다.
 

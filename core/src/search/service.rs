@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-use super::parser::{is_plain_keyword, parse, ParsedQuery};
+use super::parser::{is_plain_keyword, parse, parse_filename, ParsedQuery};
 use super::{
     MatchKind, SearchError, SearchHit, SearchMode, SearchRequest, SearchResult,
     SearchService as SearchServiceTrait,
@@ -20,19 +20,18 @@ pub struct SqliteSearchService<'a> {
 
 impl<'a> SearchServiceTrait for SqliteSearchService<'a> {
     fn search(&self, request: &SearchRequest) -> Result<SearchResult, SearchError> {
-        let parsed = parse(&request.query);
-
         let hits = match request.mode {
-            SearchMode::Filename => SearchRepository::search_filename(
-                self.conn,
-                &parsed.match_expr,
-                &parsed.filters,
-                request.limit,
-            )?
-            .into_iter()
-            .map(|row| to_hit(row, MatchKind::Exact))
-            .collect(),
-            SearchMode::Content => self.search_content(&parsed, request.limit)?,
+            SearchMode::Filename => {
+                let (needles, filters) = parse_filename(&request.query);
+                SearchRepository::search_filename(self.conn, &needles, &filters, request.limit)?
+                    .into_iter()
+                    .map(|row| to_hit(row, MatchKind::Exact))
+                    .collect()
+            }
+            SearchMode::Content => {
+                let parsed = parse(&request.query);
+                self.search_content(&parsed, request.limit)?
+            }
         };
 
         Ok(SearchResult { hits })

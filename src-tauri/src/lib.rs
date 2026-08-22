@@ -13,7 +13,10 @@ use knowdesk_core::search::{
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
-use tauri::AppHandle;
+use tauri::image::Image;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_opener::OpenerExt;
 
 /// A search request sent to the dedicated worker thread (see `SearchWorker`).
@@ -181,6 +184,17 @@ fn open_parent_folder(app: AppHandle, path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Shows the "search" window (pre-created hidden at startup, `tauri.conf.json`'s
+/// `visible: false`) and gives it keyboard focus - the single "reveal" action
+/// shared by the tray icon's left click and its "검색창 열기" menu item
+/// (`docs/12_UI_Spec.md` C4).
+fn show_search_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("search") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let db_path = db_path();
@@ -199,6 +213,58 @@ pub fn run() {
             open_path,
             open_parent_folder
         ])
+        .setup(|app| {
+            // The tray is the only thing keeping the app around once the
+            // window is hidden, so its OS-level close request (e.g. Alt+F4)
+            // must hide the window instead of destroying it - same intent as
+            // `Esc` (`docs/12_UI_Spec.md` C1: "창 닫기(트레이로 숨김, 프로세스
+            // 종료 아님)"), just reached through a different trigger.
+            if let Some(window) = app.get_webview_window("search") {
+                let window_to_hide = window.clone();
+                window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = window_to_hide.hide();
+                    }
+                });
+            }
+
+            let show_item = MenuItem::with_id(app, "show", "검색창 열기", true, None::<&str>)?;
+            // TASK-704(Settings Window)가 아직 없어 비활성화만 해둔다 - 화면이
+            // 생기면 `enabled(true)` + `on_menu_event`에 "settings" 분기만
+            // 추가하면 된다.
+            let settings_item = MenuItem::with_id(app, "settings", "설정", false, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
+
+            let tray_icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
+            TrayIconBuilder::new()
+                .icon(tray_icon)
+                .tooltip("KnowDesk")
+                .menu(&tray_menu)
+                // Left click is handled ourselves below (show the search
+                // window); only right click opens the menu
+                // (`docs/12_UI_Spec.md` C4: 좌클릭=표시, 우클릭=메뉴).
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "show" => show_search_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_search_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

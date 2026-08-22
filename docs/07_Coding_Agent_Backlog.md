@@ -148,7 +148,7 @@ TASK-705 File/Folder Actions (Open File / Open Folder / Copy Path — 키보드 
 
 TASK-706 Index Worker (완료) — `src-tauri`에 배선된 색인/감시 백그라운드 워커. `Config.watched_folders` 목록을 앱 시작 시 전체 스캔 후 계속 감시(`core/src/index/watcher.rs`의 `FileWatcher::new`가 폴더 여러 개를 한 watcher/스레드에 묶어, 폴더 수만큼 `KiwiTokenizer` 인스턴스가 늘어나는 것을 막음). 폴더 목록을 채우는 UI(TASK-704)가 아직 없어서, 지금은 `KNOWDESK_SETTINGS_PATH`(또는 기본 위치의 `settings.json` — 색인 DB와 같은 폴더, 2026-08-22 결정)를 직접 편집해야 동작함 — 목록이 비어 있으면(기본값) 워커 자체가 안 뜬다.
 
-TASK-704 Settings Window — TASK-706이 이미 배선해 둔 `Config.watched_folders`에 UI로 폴더를 추가/제거하기만 하면 됨
+TASK-704 Settings Window (완료, 2026-08-22 — 범위를 "색인 대상 폴더" 목록으로만 한정) — 새 "settings" 창(온디맨드 생성, 검색창처럼 미리 만들어두지 않음 — P95 300ms 요구 대상이 아니고 자주 안 열림)에 폴더 추가(네이티브 폴더 선택 다이얼로그, `tauri-plugin-dialog`)/제거 UI. `Config.watched_folders`를 읽고 쓰는 IPC 커맨드(`get_watched_folders`/`add_watched_folder`/`remove_watched_folder`)와 `Config::save`/`add_watched_folder`/`remove_watched_folder`(`core/src/config.rs`)로 구현. 폴더 추가 시 즉시 1회 스캔(백그라운드 스레드, `scan_folder_once`)해 바로 검색 가능해지지만, 지속 감시(watch)는 다음 재시작부터 시작됨(`run_index_worker`가 시작 시점 목록으로 `FileWatcher`를 한 번만 구성) — 재시작 없이 즉시 감시까지 붙이려면 워커를 컨트롤 채널이 있는 상시 액터로 다시 설계해야 하는데, 이번 범위에서는 보류. 폴더 제거는 목록에서만 빠지고 이미 색인된 문서는 안 지움(전체 삭제는 "색인 초기화" — 아직 없음). mockup의 나머지 항목(제외 패턴 편집, 전역 단축키 변경 UI, 검색 결과 개수, 자동 실행, DB 위치 변경, 색인 초기화)은 범위 밖.
 
 ---
 

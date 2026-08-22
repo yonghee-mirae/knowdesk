@@ -20,3 +20,26 @@ export async function openParentFolder(path: string): Promise<void> {
 export async function copyPath(path: string): Promise<void> {
   await writeText(path);
 }
+
+export async function openSettingsWindow(): Promise<void> {
+  await invoke('open_settings_window');
+}
+
+export async function getWatchedFolders(): Promise<string[]> {
+  return invoke<string[]>('get_watched_folders');
+}
+
+/** Returns the updated folder list. */
+export async function addWatchedFolder(path: string): Promise<string[]> {
+  return invoke<string[]>('add_watched_folder', { path });
+}
+
+/** Returns the updated folder list. */
+export async function removeWatchedFolder(path: string): Promise<string[]> {
+  return invoke<string[]>('remove_watched_folder', { path });
+}
+
+/** Opens a native folder-picker dialog. `null` if the user cancels. */
+export async function openFolderPicker(): Promise<string | null> {
+  return invoke<string | null>('open_folder_picker');
+}

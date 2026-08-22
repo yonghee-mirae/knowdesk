@@ -129,8 +129,8 @@ DRM을 논외로 하면 최대 리스크는 PDF 한글 추출 품질이다. 본�
 
 ## C5 Settings & Diagnostics
 
-- Index Worker (완료, TASK-706) — `src-tauri`가 `Config.watched_folders`를 읽어 시작 시 전체 스캔 + 이후 계속 감시. Settings Window(폴더 등록 UI)가 아직 없어 지금은 `settings.json`(색인 DB와 같은 폴더)을 직접 편집해야 함
-- Settings Window
+- Index Worker (완료, TASK-706) — `src-tauri`가 `Config.watched_folders`를 읽어 시작 시 전체 스캔 + 이후 계속 감시.
+- Settings Window (완료, TASK-704 — "색인 대상 폴더" 목록으로 범위 한정) — 폴더 추가(네이티브 폴더 선택 다이얼로그)/제거 UI. 추가하면 즉시 1회 스캔되지만, 지속 감시는 다음 재시작부터. 그 외 항목(제외 패턴, 단축키 변경, 결과 개수, 자동 실행, DB 위치, 색인 초기화)은 범위 밖
 - Statistics
 - Logs
 - 초기 색인 진행률 표시 — 온보딩 위저드는 아니고, 최초 대량 색인 중 진행률과 "색인 중" 상태 문구만 노출한다(`KnowDesk_추가검토사항.md` E-2 참조)

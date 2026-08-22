@@ -1,7 +1,7 @@
 //! Configuration system. Reads `settings.json`, falling back to defaults if absent
 //! (`src-tauri`'s `settings_path()` decides where that file actually lives).
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Default exclusion rules (see PRD Chapter 3 "Default Exclusion Rules")
@@ -9,7 +9,7 @@ pub const DEFAULT_MAX_FILE_SIZE_MB: u64 = 50;
 pub const DEFAULT_EXCLUDED_EXTENSIONS: &[&str] = &["zip", "7z", "rar"];
 pub const DEFAULT_TEMP_PATTERNS: &[&str] = &["~$", ".tmp", ".temp", ".cache"];
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub db_path: PathBuf,
@@ -46,8 +46,38 @@ impl Config {
         }
     }
 
+    /// Writes this config to `path` as pretty-printed JSON, creating the parent
+    /// directory if it doesn't exist yet (the app-data directory may not exist
+    /// on a first run - `settings_path()`'s directory is the same one `db_path()`
+    /// already creates, but `save()` shouldn't assume caller order).
+    pub fn save(&self, path: &Path) -> anyhow::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(self)?)?;
+        Ok(())
+    }
+
     pub fn max_file_size_bytes(&self) -> u64 {
         self.max_file_size_mb * 1024 * 1024
+    }
+
+    /// Adds `folder` to `watched_folders` if it isn't already there. Returns
+    /// whether it was newly added (`false` if it was already present).
+    pub fn add_watched_folder(&mut self, folder: PathBuf) -> bool {
+        if self.watched_folders.contains(&folder) {
+            return false;
+        }
+        self.watched_folders.push(folder);
+        true
+    }
+
+    /// Removes `folder` from `watched_folders`. Returns whether it was present
+    /// (and therefore actually removed).
+    pub fn remove_watched_folder(&mut self, folder: &Path) -> bool {
+        let before = self.watched_folders.len();
+        self.watched_folders.retain(|f| f != folder);
+        self.watched_folders.len() != before
     }
 }
 
@@ -75,5 +105,43 @@ mod tests {
         );
         // Fields omitted from the JSON keep their defaults.
         assert_eq!(config.max_file_size_mb, DEFAULT_MAX_FILE_SIZE_MB);
+    }
+
+    #[test]
+    fn save_then_load_roundtrips_watched_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        // Nested, not-yet-existing directory - `save()` must create it.
+        let path = dir.path().join("nested").join("settings.json");
+
+        let mut config = Config::default();
+        config.add_watched_folder(PathBuf::from("/a/이사회"));
+        config.save(&path).unwrap();
+
+        let reloaded = Config::load(Some(&path)).unwrap();
+        assert_eq!(reloaded.watched_folders, vec![PathBuf::from("/a/이사회")]);
+    }
+
+    #[test]
+    fn add_watched_folder_dedupes() {
+        let mut config = Config::default();
+        assert!(config.add_watched_folder(PathBuf::from("/a")));
+        assert!(
+            !config.add_watched_folder(PathBuf::from("/a")),
+            "adding the same folder twice should report it wasn't newly added"
+        );
+        assert_eq!(config.watched_folders, vec![PathBuf::from("/a")]);
+    }
+
+    #[test]
+    fn remove_watched_folder_reports_whether_it_was_present() {
+        let mut config = Config::default();
+        config.add_watched_folder(PathBuf::from("/a"));
+
+        assert!(config.remove_watched_folder(Path::new("/a")));
+        assert!(config.watched_folders.is_empty());
+        assert!(
+            !config.remove_watched_folder(Path::new("/a")),
+            "removing an already-absent folder should report false"
+        );
     }
 }

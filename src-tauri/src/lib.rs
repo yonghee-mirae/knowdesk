@@ -27,7 +27,8 @@ use std::time::Duration;
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 
@@ -223,6 +224,87 @@ fn open_parent_folder(app: AppHandle, path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+fn folder_list(config: &Config) -> Vec<String> {
+    config
+        .watched_folders
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
+}
+
+#[tauri::command]
+fn get_watched_folders() -> Result<Vec<String>, String> {
+    let config = Config::load(Some(&settings_path())).map_err(|e| e.to_string())?;
+    Ok(folder_list(&config))
+}
+
+/// Adds `path` to `Config::watched_folders`, persists `settings.json`, and kicks
+/// off a one-off background scan (`scan_folder_once`) so it's searchable right
+/// away. Continuous watching of the new folder only starts on next launch -
+/// `spawn_index_worker`/`run_index_worker` build their `FileWatcher` once at
+/// startup from whatever the list was then.
+#[tauri::command]
+fn add_watched_folder(path: String) -> Result<Vec<String>, String> {
+    let mut config = Config::load(Some(&settings_path())).map_err(|e| e.to_string())?;
+    let folder = PathBuf::from(&path);
+    if config.add_watched_folder(folder.clone()) {
+        config.save(&settings_path()).map_err(|e| e.to_string())?;
+        let db_path = db_path();
+        let config_for_scan = config.clone();
+        thread::spawn(move || {
+            if let Err(e) = scan_folder_once(&db_path, &config_for_scan, &folder) {
+                eprintln!("Initial scan of {} failed: {e}", folder.display());
+            }
+        });
+    }
+    Ok(folder_list(&config))
+}
+
+/// Removes `path` from `Config::watched_folders` and persists `settings.json`.
+/// Documents already indexed from that folder are left as-is - a full purge
+/// is what "색인 초기화" (`docs/12_UI_Spec.md` C5, not yet built) is for, not
+/// this.
+#[tauri::command]
+fn remove_watched_folder(path: String) -> Result<Vec<String>, String> {
+    let mut config = Config::load(Some(&settings_path())).map_err(|e| e.to_string())?;
+    config.remove_watched_folder(Path::new(&path));
+    config.save(&settings_path()).map_err(|e| e.to_string())?;
+    Ok(folder_list(&config))
+}
+
+/// Opens a native folder-picker dialog for "폴더 추가". Returns `None` if the
+/// user cancels.
+#[tauri::command]
+fn open_folder_picker(app: AppHandle) -> Option<String> {
+    app.dialog()
+        .file()
+        .set_title("색인 대상 폴더 선택")
+        .blocking_pick_folder()
+        .and_then(|picked| picked.into_path().ok())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Opens the Settings window (`docs/12_UI_Spec.md` C5, TASK-704), creating it
+/// on first use rather than pre-creating it hidden at startup like the search
+/// window - unlike search, there's no P95 300ms requirement to show it
+/// instantly, and it's opened rarely.
+#[tauri::command]
+fn open_settings_window(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("settings.html".into()))
+        .title("KnowDesk 설정")
+        .inner_size(560.0, 480.0)
+        .resizable(false)
+        .center()
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Shows the "search" window (pre-created hidden at startup, `tauri.conf.json`'s
 /// `visible: false`) and gives it keyboard focus - the single "reveal" action
 /// shared by the tray icon's left click and its "검색창 열기" menu item
@@ -316,6 +398,28 @@ fn run_index_worker(db_path: &Path, config: &Config) -> Result<(), Box<dyn std::
     Ok(())
 }
 
+/// Scans `folder` once and indexes it - used by `add_watched_folder` right
+/// after registering a new folder through the Settings window, so it's
+/// searchable immediately rather than waiting for the next app restart to
+/// pick it up into `run_index_worker`'s watch list.
+fn scan_folder_once(db_path: &Path, config: &Config, folder: &Path) -> Result<(), String> {
+    let db = Db::open(db_path).map_err(|e| e.to_string())?;
+    let extractors = default_extractors();
+    let bigram = BigramTokenizer;
+    let kiwi = load_kiwi();
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config,
+        extractors: &extractors,
+        bigram: &bigram,
+        kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
+    };
+    pipeline
+        .index_directory(folder)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let db_path = db_path();
@@ -343,11 +447,17 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(worker)
         .invoke_handler(tauri::generate_handler![
             search,
             open_path,
-            open_parent_folder
+            open_parent_folder,
+            get_watched_folders,
+            add_watched_folder,
+            remove_watched_folder,
+            open_folder_picker,
+            open_settings_window,
         ])
         .setup(|app| {
             // The tray is the only thing keeping the app around once the
@@ -366,10 +476,7 @@ pub fn run() {
             }
 
             let show_item = MenuItem::with_id(app, "show", "검색창 열기", true, None::<&str>)?;
-            // TASK-704(Settings Window)가 아직 없어 비활성화만 해둔다 - 화면이
-            // 생기면 `enabled(true)` + `on_menu_event`에 "settings" 분기만
-            // 추가하면 된다.
-            let settings_item = MenuItem::with_id(app, "settings", "설정", false, None::<&str>)?;
+            let settings_item = MenuItem::with_id(app, "settings", "설정", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
             let tray_menu = Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
 
@@ -384,6 +491,9 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show_search_window(app),
+                    "settings" => {
+                        let _ = open_settings_window(app.clone());
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 })

@@ -160,6 +160,15 @@ impl DocumentRepository {
         Ok(rows)
     }
 
+    /// Most recent `indexed_at` timestamp across all documents, or `None` if
+    /// nothing has been indexed yet. Backs the "마지막 색인 시각" line in the
+    /// statistics summary (TASK-901, `12_UI_Spec.md` C5).
+    pub fn last_indexed_at(conn: &Connection) -> rusqlite::Result<Option<String>> {
+        conn.query_row("SELECT MAX(indexed_at) FROM documents", [], |row| {
+            row.get(0)
+        })
+    }
+
     /// Wipes every indexed document (`paths`/`document_bodies`/`content_fts`/
     /// `documents`) while leaving the schema itself intact - "색인 초기화"
     /// (Reset Index, tray menu action). The caller is responsible for
@@ -209,5 +218,26 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(!DocumentRepository::exists(&db.conn, "abc").unwrap());
+    }
+
+    #[test]
+    fn last_indexed_at_is_none_when_empty_and_the_latest_timestamp_otherwise() {
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(DocumentRepository::last_indexed_at(&db.conn).unwrap(), None);
+
+        DocumentRepository::upsert_document(
+            &db.conn,
+            &DocumentRecord {
+                document_id: "abc".to_string(),
+                file_size: 10,
+                text_bytes: 5,
+                index_tier: IndexTier::Full,
+            },
+        )
+        .unwrap();
+
+        assert!(DocumentRepository::last_indexed_at(&db.conn)
+            .unwrap()
+            .is_some());
     }
 }

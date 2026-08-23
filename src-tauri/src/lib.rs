@@ -312,6 +312,44 @@ fn register_hotkey(
         })
 }
 
+/// "Statistics" (tray menu, TASK-901): a human-readable index summary - total
+/// documents, FULL/META breakdown, DB file size, last indexed time. `SKIP`
+/// isn't included - unlike FULL/META, a skipped file never gets a
+/// `documents` row at all (`core::index::pipeline`'s `index_file`), so
+/// there's no persisted count to show for it. Opens its own short-lived DB
+/// connection (like `knowdesk-cli stats`) - a plain read needs no
+/// coordination with the index worker thread's own connection.
+fn compute_stats(db_path: &Path) -> Result<String, String> {
+    let db = Db::open(db_path).map_err(|e| e.to_string())?;
+    let tiers = DocumentRepository::count_by_tier(&db.conn).map_err(|e| e.to_string())?;
+    let count_of = |tier: &str| tiers.iter().find(|(t, _)| t == tier).map_or(0, |(_, c)| *c);
+    let full = count_of("FULL");
+    let meta = count_of("META");
+    let last_indexed = DocumentRepository::last_indexed_at(&db.conn).map_err(|e| e.to_string())?;
+    let size = std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0);
+
+    Ok(format!(
+        "Total: {} documents\n  Full text indexed: {full}\n  Metadata only: {meta}\nDatabase size: {}\nLast indexed: {}",
+        full + meta,
+        format_bytes(size),
+        last_indexed.as_deref().unwrap_or("never"),
+    ))
+}
+
+/// Same formatting as `knowdesk-cli`'s own `format_bytes` (`cli/src/main.rs`) -
+/// not shared as a dependency since it's a few lines and `cli` isn't a
+/// library `src-tauri` depends on.
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
+    let mut size = bytes as f64;
+    let mut unit = 0;
+    while size >= 1024.0 && unit < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit += 1;
+    }
+    format!("{size:.1}{}", UNITS[unit])
+}
+
 fn default_extractors() -> Vec<Box<dyn ContentExtractor>> {
     vec![
         Box::new(TxtExtractor),
@@ -646,6 +684,11 @@ pub fn run() {
 
             let app_handle = app.handle().clone();
 
+            // "Statistics" (tray menu) opens its own short-lived connection
+            // (like `knowdesk-cli stats`) rather than going through the index
+            // worker thread - a plain read needs no coordination with it.
+            let stats_db_path = db_path.clone();
+
             // Spawned here (not before `tauri::Builder::default()` above, as
             // originally written) because live hotkey reload needs an
             // `AppHandle`, which doesn't exist until now.
@@ -698,6 +741,8 @@ pub fn run() {
             // gets its own separators on both sides - it's destructive
             // (wipes the whole DB), unlike "Settings"/"Quit".
             let settings_item = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
+            let statistics_item =
+                MenuItem::with_id(app, "statistics", "Statistics", true, None::<&str>)?;
             let separator_1 = PredefinedMenuItem::separator(app)?;
             let reset_index_item =
                 MenuItem::with_id(app, "reset_index", "Reset Index", true, None::<&str>)?;
@@ -707,6 +752,7 @@ pub fn run() {
                 app,
                 &[
                     &settings_item,
+                    &statistics_item,
                     &separator_1,
                     &reset_index_item,
                     &separator_2,
@@ -714,9 +760,21 @@ pub fn run() {
                 ],
             )?;
 
+            // macOS gets its own monochrome silhouette + alpha icon
+            // (`tray_light.png`) so `.icon_as_template(true)` below can make
+            // the menu bar recolor it for light/dark mode automatically -
+            // that only works with a template-style image, not a colored
+            // one. Windows/Ubuntu have no such OS-level auto-recoloring
+            // (`icon_as_template` is a no-op there), so they keep the plain
+            // colored icon for now - pending `tray_dark.png`, a matching
+            // pair for manually switching by detected system theme.
+            #[cfg(target_os = "macos")]
+            let tray_icon = Image::from_bytes(include_bytes!("../icons/tray_light.png"))?;
+            #[cfg(not(target_os = "macos"))]
             let tray_icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
             TrayIconBuilder::new()
                 .icon(tray_icon)
+                .icon_as_template(true)
                 .tooltip("KnowDesk")
                 .menu(&tray_menu)
                 // Left click is handled ourselves below (toggle the search
@@ -726,6 +784,15 @@ pub fn run() {
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "settings" => {
                         let _ = open_settings_folder(app.clone());
+                    }
+                    "statistics" => {
+                        let text = compute_stats(&stats_db_path)
+                            .unwrap_or_else(|e| format!("Failed to read statistics: {e}"));
+                        app.dialog()
+                            .message(text)
+                            .title("Statistics")
+                            .kind(MessageDialogKind::Info)
+                            .show(|_| {});
                     }
                     "reset_index" => {
                         let reset_tx = reset_tx.clone();
@@ -1008,5 +1075,51 @@ mod tests {
             search_finds(&check_db, "채권"),
             "Reset Index did not re-scan the watched folder"
         );
+    }
+
+    #[test]
+    fn compute_stats_reports_tier_counts_and_db_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        {
+            let db = Db::open(&db_path).unwrap();
+            DocumentRepository::upsert_document(
+                &db.conn,
+                &DocumentRecord {
+                    document_id: "full1".to_string(),
+                    file_size: 10,
+                    text_bytes: 5,
+                    index_tier: IndexTier::Full,
+                },
+            )
+            .unwrap();
+            DocumentRepository::upsert_document(
+                &db.conn,
+                &DocumentRecord {
+                    document_id: "meta1".to_string(),
+                    file_size: 10,
+                    text_bytes: 0,
+                    index_tier: IndexTier::Meta,
+                },
+            )
+            .unwrap();
+        }
+
+        let stats = compute_stats(&db_path).unwrap();
+        assert!(stats.contains("Total: 2 documents"), "{stats}");
+        assert!(stats.contains("Full text indexed: 1"), "{stats}");
+        assert!(stats.contains("Metadata only: 1"), "{stats}");
+        assert!(!stats.contains("Last indexed: never"), "{stats}");
+    }
+
+    #[test]
+    fn compute_stats_on_empty_db_reports_zero_and_never_indexed() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        Db::open(&db_path).unwrap();
+
+        let stats = compute_stats(&db_path).unwrap();
+        assert!(stats.contains("Total: 0 documents"), "{stats}");
+        assert!(stats.contains("Last indexed: never"), "{stats}");
     }
 }

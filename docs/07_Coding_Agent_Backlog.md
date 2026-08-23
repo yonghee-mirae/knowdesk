@@ -172,6 +172,8 @@ TASK-704 Settings Window → "설정 파일 폴더 열기"로 대체 (완료, 20
 
 TASK-801 Tray Manager
 
+⚠️ **macOS 템플릿 아이콘 (2026-08-24):** `TrayIconBuilder`에 `.icon_as_template(true)` 추가 - macOS 전용(다른 OS에서는 no-op), 메뉴바가 라이트/다크 모드에 맞춰 아이콘 색을 자동으로 바꿔준다. 흑백 실루엣 + 알파 채널로 된 이미지여야 제대로 나오는데, 지금 `src-tauri/icons/32x32.png`는 아직 단색 사각형 플레이스홀더라 이 옵션을 켠 상태에선 메뉴바에 검은 사각형으로 보인다 - 실제 아이콘 이미지로 교체(`npx tauri icon <원본>` 또는 파일 직접 교체 후 재빌드)가 아직 남아있다.
+
 ⚠️ **트레이 전용 백그라운드 앱으로 확정 (2026-08-24):** 태스크바/Dock에 실행 상태로 뜨지 않고 트레이 아이콘만 남도록 함. macOS는 `app.set_activation_policy(tauri::ActivationPolicy::Accessory)`(Dock 아이콘·Cmd+Tab 전환창 둘 다 제외), Windows/Linux는 `tauri.conf.json` 검색창 설정의 `skipTaskbar: true`로 처리 - 창이 보일 때도 태스크바 버튼은 안 생김.
 
 ⚠️ **중복 실행 방지 (2026-08-24):** `tauri-plugin-single-instance` 도입, 빌더 체인 맨 앞에 등록(공식 권장 순서). 이미 실행 중일 때 두 번째로 실행하면 새 프로세스는 뜨지 않고, 기존 프로세스의 검색창을 보여주고 포커스만 준다(`show_search_window` - 좌클릭/단축키의 토글과 달리 항상 보여주기만 함, 이미 열려 있어도 숨기지 않음). 실제로 두 번 실행해서 프로세스가 하나만 남는 것 확인.
@@ -186,9 +188,11 @@ TASK-802 Hotkey Manager (창 사전 생성 + show/focus 방식 — P95 300ms 대
 
 ## Diagnostics
 
-TASK-901 Statistics Service
+TASK-901 Statistics Service (완료, 2026-08-24)
 
-⚠️ **`documents` 스키마 축소 (2026-08-24):** `index_status`/`demotion_reason`/`drm_status`/`retry_count`/`last_attempt_at`/`content_stored` 6개 컬럼 제거(`core/src/db/migrate.rs` MIGRATIONS v3, 상세 근거는 `04_Data_Model.md` 변경 이력 참조) - 어느 것도 실제 코드에서 읽거나 쓰인 적이 없었다. 이 통계 서비스(TASK-901)가 구현될 때 `demotion_reason`별 집계(`count_by_demotion_reason`, 제거됨)를 낼 계획이었다면 이제는 낼 수 없다 - 실패 사유 구분 자체가 필요 없다고 결정됐으므로, `index_tier`별 집계(`count_by_tier`, 유지됨)만으로 충분.
+⚠️ **`documents` 스키마 축소:** `index_status`/`demotion_reason`/`drm_status`/`retry_count`/`last_attempt_at`/`content_stored` 6개 컬럼 제거(`core/src/db/migrate.rs` MIGRATIONS v3, 상세 근거는 `04_Data_Model.md` 변경 이력 참조) - 어느 것도 실제 코드에서 읽거나 쓰인 적이 없었다. 이 통계 서비스(TASK-901)가 구현될 때 `demotion_reason`별 집계(`count_by_demotion_reason`, 제거됨)를 낼 계획이었다면 이제는 낼 수 없다 - 실패 사유 구분 자체가 필요 없다고 결정됐으므로, `index_tier`별 집계(`count_by_tier`, 유지됨)만으로 충분.
+
+⚠️ **구현:** Settings Window가 없는 것과 같은 이유로 별도 통계 화면 대신 트레이 메뉴 액션으로 뺐다 (`Settings` / `Statistics` / 구분선 / `Reset Index` / 구분선 / `Quit`). 클릭하면 `src-tauri`의 `compute_stats`가 `knowdesk-cli stats`처럼 독립된 짧은 DB 연결을 열어(색인 워커 스레드와 조율 불필요한 단순 읾기) 전체 문서 수, Full/Meta 건수, DB 파일 크기(`std::fs::metadata`), 마지막 색인 시각(`DocumentRepository::last_indexed_at`, 신설)을 모아 `tauri_plugin_dialog`의 Info 다이얼로그로 보여준다. **Skip 건수는 포함하지 않음** - `core::index::pipeline::index_file`이 SKIP인 파일은 처음부터 `documents` 행 자체를 안 만들기 때문에 DB에서 조회할 수 있는 집계가 아니다(누적 스킵 카운터를 새로 영속화하는 건 이번 범위 밖으로 판단).
 
 TASK-902 Log Export
 

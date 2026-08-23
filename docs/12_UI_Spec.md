@@ -109,6 +109,8 @@ C1 레이아웃의 우측 패널. 별도 화면이 아니라 결과 리스트 �
   2. (2026-08-23) 그 컨트롤 채널·"Reload" 메뉴 항목 자체를 없애고, 이미 있는 파일 감시 기능을 `settings.json`에도 그대로 적용했다 — `run_index_worker`가 색인 대상 폴더용 `FileWatcher`와 별개로 `settings.json`이 있는 폴더도 감시한다. 수정 이벤트가 오면 다시 읽어서 `watched_folders` 변경분을 적용(`core/src/index/watcher.rs`의 `FileWatcher::watch`/`unwatch`로 이미 떠 있는 watcher에 루트를 즉석으로 추가/제거)하고, 삭제 이벤트가 오면(파일이 실제로 없어졌는지 확인 후) 기본값으로 재생성한다. "수동으로 누르는 Reload"가 있을 필요 자체가 없어졌다.
 - **P95 300ms 달성 방법**(`11_Implementation_Plan.md`, 재확인): 창을 앱 시작 시 미리 생성해 숨겨두고, 단축키 입력 시 show+focus만 수행한다. 콜드 스타트로는 300ms를 맞출 수 없다.
 - 검색창이 이미 열려 있을 때 단축키를 다시 누르면? → **토글(다시 누르면 닫힘)로 확정** — Spotlight/PowerToys Run과 동일한 관례. 좌클릭도 동일하게 토글.
+- **트레이 전용, 태스크바/Dock 비노출 (2026-08-24 확정):** 창을 보여줄 때도 태스크바(Windows/Linux)나 Dock(macOS)에 실행 상태로 뜨지 않는다 - macOS는 앱 전체의 activation policy를 `Accessory`로(Dock 아이콘·Cmd+Tab 전환창 제외), Windows/Linux는 검색창의 `skipTaskbar: true`로 처리.
+- **중복 실행 방지 (2026-08-24 확정):** 이미 실행 중일 때 다시 실행하면 새 프로세스는 안 뜨고, 기존 프로세스의 검색창을 보여주고 포커스만 준다(`tauri-plugin-single-instance`) - 좌클릭/단축키의 토글과 달리 이미 열려 있어도 숨기지 않는다.
 
 ---
 

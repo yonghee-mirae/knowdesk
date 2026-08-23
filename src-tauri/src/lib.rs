@@ -281,6 +281,18 @@ fn toggle_search_window(app: &AppHandle) {
     }
 }
 
+/// Shows and focuses the search window unconditionally, never hiding it -
+/// used when a second launch attempt is detected
+/// (`tauri_plugin_single_instance`, registered in `run()`), where the intent
+/// is always "bring the app to the front", unlike the tray click/hotkey's
+/// toggle behavior.
+fn show_search_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("search") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 /// Registers `hotkey` (`tauri-plugin-global-shortcut` string syntax, e.g.
 /// `"CmdOrCtrl+Alt+K"`) to toggle the search window - shared by `run()`'s
 /// initial registration and by live-reload when `settings.json`'s `hotkey`
@@ -604,6 +616,12 @@ pub fn run() {
     let (reset_tx, reset_rx) = mpsc::channel::<()>();
 
     tauri::Builder::default()
+        // Must be registered first (upstream recommendation) - a second launch
+        // attempt is caught here and the running instance's search window is
+        // shown/focused instead of a new process starting.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_search_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())

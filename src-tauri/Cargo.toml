@@ -26,6 +26,9 @@ tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
 # Global hotkey to reveal the search window from anywhere (TASK-802).
 tauri-plugin-global-shortcut = "2"
+# Prevents a second process from starting - a duplicate launch just shows/focuses
+# the already-running instance's search window instead.
+tauri-plugin-single-instance = "2"
 # Confirmation dialog for "Reset Index" (tray menu action) - only its non-blocking
 # `.show(callback)` API is used, never a `blocking_*` one, so this can't reproduce
 # the TASK-704 `blocking_pick_folder()` deadlock that got the picker removed.

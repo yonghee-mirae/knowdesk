@@ -172,6 +172,10 @@ TASK-704 Settings Window → "설정 파일 폴더 열기"로 대체 (완료, 20
 
 TASK-801 Tray Manager
 
+⚠️ **트레이 전용 백그라운드 앱으로 확정 (2026-08-24):** 태스크바/Dock에 실행 상태로 뜨지 않고 트레이 아이콘만 남도록 함. macOS는 `app.set_activation_policy(tauri::ActivationPolicy::Accessory)`(Dock 아이콘·Cmd+Tab 전환창 둘 다 제외), Windows/Linux는 `tauri.conf.json` 검색창 설정의 `skipTaskbar: true`로 처리 - 창이 보일 때도 태스크바 버튼은 안 생김.
+
+⚠️ **중복 실행 방지 (2026-08-24):** `tauri-plugin-single-instance` 도입, 빌더 체인 맨 앞에 등록(공식 권장 순서). 이미 실행 중일 때 두 번째로 실행하면 새 프로세스는 뜨지 않고, 기존 프로세스의 검색창을 보여주고 포커스만 준다(`show_search_window` - 좌클릭/단축키의 토글과 달리 항상 보여주기만 함, 이미 열려 있어도 숨기지 않음). 실제로 두 번 실행해서 프로세스가 하나만 남는 것 확인.
+
 ⚠️ **Reset Index 추가 (2026-08-24):** 트레이 우클릭 메뉴에 "Reset Index" 항목 신설 (`Settings` / 구분선 / `Reset Index` / 구분선 / `Quit`). 클릭 시 `tauri_plugin_dialog`의 non-blocking `.show()` 콜백으로 확인 다이얼로그를 띄우고(TASK-704 데드락의 원인이었던 `blocking_*` API는 쓰지 않음), 확인되면 채널로 색인 워커 스레드에 신호를 보내 `core::db::documents::DocumentRepository::reset_all`로 DB를 비운 뒤 감시 중인 모든 폴더를 처음부터 재스캔한다.
 
 TASK-802 Hotkey Manager (창 사전 생성 + show/focus 방식 — P95 300ms 대응)

@@ -144,6 +144,8 @@ DRM을 논외로 하면 최대 리스크는 PDF 한글 추출 품질이다. 본�
 - Kiwi / PDFium Windows 바이너리 동봉
 - 오프라인 초기화 경로 검증
 
+⚠️ **macOS 선행 구현 (2026-08-23):** Windows 이관보다 먼저, macOS 패키징 요청에 맞춰 Kiwi/PDFium 동봉을 macOS용으로 구현했다 - `tauri.conf.json`의 `bundle.resources`가 `libpdfium.dylib`/`libkiwi.dylib`/Kiwi 모델을 `.app`의 `Contents/Resources/native/`에 동봉하고, `src-tauri`의 `set_bundled_native_lib_env_vars`(`run()` 맨 앞에서 1회 호출)가 실행 파일 경로 기준으로 그 위치를 계산해 `KNOWDESK_PDFIUM_LIB_DIR`/`KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`를 설정한다 - 이미 사용자가 직접 그 환경변수를 설정해 둔 경우엔 손대지 않고, 동봉 파일이 실제로 없으면(dev 빌드) 조용히 아무것도 하지 않는다(둘 다 이미 있던 graceful fallback: PDF는 META, Kiwi는 bigram만). 패키지된 `.app`으로 실제 색인해 `morph_kiwi` 컬럼에 형태소 분석 결과("지었다"→"짓")가 들어가는 것, PDF가 META가 아니라 FULL로 색인되는 것 모두 확인함. Windows용 바이너리 동봉·경로 계산은 여전히 미착수 - 이 항목은 그대로 남아 있음.
+
 ## D2 Windows 경로 처리
 
 - 경로 대소문자 정규화
@@ -154,6 +156,8 @@ DRM을 논외로 하면 최대 리스크는 PDF 한글 추출 품질이다. 본�
 
 - 인스톨러
 - 코드사이닝
+
+⚠️ **macOS 선행 구현 (2026-08-23):** `tauri.conf.json`의 `bundle.active`를 켜고 `targets: ["app", "dmg"]`로 `.app`+`.dmg`를 만든다(코드사이닝은 아직 없음 - 로컬 실행/배포 테스트용 ad-hoc 빌드). Windows용 인스톨러(NSIS/MSI)·코드사이닝은 여전히 미착수.
 
 ## D4 Performance
 

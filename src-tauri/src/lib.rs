@@ -103,7 +103,7 @@ impl SearchWorker {
 /// `KNOWDESK_DB_PATH` overrides the DB location - lets the same manual-testing
 /// workflow used for `knowdesk-cli` (`--db ./samples.db`) point this app at an
 /// already-indexed DB. Without it, defaults to a per-OS app-data directory
-/// (`README.md`'s `--db`-less CLI behavior is cwd-relative, which isn't
+/// (`DEVELOPMENT.md`'s `--db`-less CLI behavior is cwd-relative, which isn't
 /// appropriate for a GUI app launched from anywhere).
 fn db_path() -> PathBuf {
     if let Ok(path) = std::env::var("KNOWDESK_DB_PATH") {
@@ -151,6 +151,55 @@ fn load_kiwi() -> Option<KiwiTokenizer> {
         );
     }
     kiwi
+}
+
+/// Points `KNOWDESK_PDFIUM_LIB_DIR`/`KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`
+/// at the native libraries/model bundled into the packaged `.app`
+/// (`Contents/Resources/native/...` - see `tauri.conf.json`'s `bundle.resources`
+/// and `docs/03_Architecture.md`). Called once at the very start of `run()`,
+/// before `load_kiwi()`/the first PDF extraction can run.
+///
+/// An already-set env var always wins (local dev pointing at `.pdfium`/`.kiwi`
+/// via the shell), and this is a no-op if the bundled files aren't actually
+/// there - e.g. `cargo run`/`tauri dev` has no `Resources` directory next to
+/// the dev binary. Either way, `core::extract::pdf`/`core::nlp::kiwi` already
+/// fall back gracefully (PDF -> META tier, Korean search -> bigram only) when
+/// these are unset, so a miss here never breaks anything - it only means the
+/// packaged app runs in that reduced mode instead of fully offline-capable.
+#[cfg(target_os = "macos")]
+fn set_bundled_native_lib_env_vars() {
+    let Some(resources) = std::env::current_exe().ok().and_then(|exe| {
+        // Packaged layout: `KnowDesk.app/Contents/MacOS/<exe>` ->
+        // `KnowDesk.app/Contents/Resources` (same convention Tauri's own
+        // `resource_dir()` uses, replicated here since this runs before an
+        // `AppHandle` exists).
+        exe.parent().map(|dir| dir.join("../Resources/native"))
+    }) else {
+        return;
+    };
+
+    if std::env::var_os("KNOWDESK_PDFIUM_LIB_DIR").is_none() {
+        let dir = resources.join("pdfium");
+        if dir.join("libpdfium.dylib").is_file() {
+            // SAFETY: called once, single-threaded, before any thread that
+            // could read the environment concurrently is spawned.
+            unsafe { std::env::set_var("KNOWDESK_PDFIUM_LIB_DIR", dir) };
+        }
+    }
+
+    if std::env::var_os("KNOWDESK_KIWI_LIB_PATH").is_none()
+        && std::env::var_os("KNOWDESK_KIWI_MODEL_DIR").is_none()
+    {
+        let lib_path = resources.join("kiwi/libkiwi.dylib");
+        let model_dir = resources.join("kiwi/models");
+        if lib_path.is_file() && model_dir.is_dir() {
+            // SAFETY: see above.
+            unsafe {
+                std::env::set_var("KNOWDESK_KIWI_LIB_PATH", lib_path);
+                std::env::set_var("KNOWDESK_KIWI_MODEL_DIR", model_dir);
+            }
+        }
+    }
 }
 
 /// Matches `frontend/src/types.ts`'s `SearchHit`.
@@ -724,6 +773,9 @@ fn apply_folder_diff(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "macos")]
+    set_bundled_native_lib_env_vars();
+
     let db_path = db_path();
     if let Some(parent) = db_path.parent() {
         // Best-effort - `Db::open` below fails loudly if this didn't work.

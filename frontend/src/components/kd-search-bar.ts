@@ -45,7 +45,6 @@ export class KdSearchBar extends HTMLElement {
           display: flex;
           background: var(--surface-2);
           border: 1px solid var(--border);
-          border-radius: 8px;
           padding: 2px;
           gap: 2px;
         }
@@ -57,7 +56,6 @@ export class KdSearchBar extends HTMLElement {
           font-size: 12.5px;
           font-weight: 600;
           padding: 5px 10px;
-          border-radius: 6px;
           cursor: pointer;
         }
         .mode-toggle button.active {

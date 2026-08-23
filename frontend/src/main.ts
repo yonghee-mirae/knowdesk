@@ -96,6 +96,19 @@ function showResults(): void {
   preview.hidden = false;
 }
 
+/** Shows `hit` in the preview pane, and - if it has no snippet (a
+ * filter-only query, or filename mode never has one) and its body was
+ * actually extracted (FULL tier) - fetches the document's opening text and
+ * fills it in once it arrives, instead of leaving the pane empty. The result
+ * list doesn't need this: there's no match there either way to show
+ * (`docs/12_UI_Spec.md` C2). */
+function showPreview(hit: SearchHit): void {
+  preview.showHit(hit);
+  if (hit.snippet === null && hit.indexTier === 'FULL') {
+    void backend.previewBody(hit.path).then((text) => preview.showBodyPreview(hit.path, text));
+  }
+}
+
 // Guards against out-of-order replies when a fast typist outruns the debounce
 // (e.g. two keystrokes each trigger a search, and the first one's IPC round
 // trip resolves after the second one's) - only the most recently issued
@@ -123,7 +136,7 @@ async function runSearch(): Promise<void> {
     return;
   }
   resultList.render(hits, state.mode, null);
-  preview.showHit(hits[0] as SearchHit);
+  showPreview(hits[0] as SearchHit);
 }
 
 let debounceHandle: ReturnType<typeof setTimeout> | null = null;
@@ -194,14 +207,14 @@ function moveSelection(delta: number): void {
   if (state.hits.length === 0) return;
   state.selected = (state.selected + delta + state.hits.length) % state.hits.length;
   resultList.setSelected(state.selected);
-  preview.showHit(state.hits[state.selected] as SearchHit);
+  showPreview(state.hits[state.selected] as SearchHit);
 }
 
 function selectIndex(index: number): void {
   if (index < 0 || index >= state.hits.length) return;
   state.selected = index;
   resultList.setSelected(index);
-  preview.showHit(state.hits[index] as SearchHit);
+  showPreview(state.hits[index] as SearchHit);
 }
 
 searchBar.addEventListener('kd-query-input', () => scheduleSearch());

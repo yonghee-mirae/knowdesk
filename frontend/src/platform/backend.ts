@@ -37,3 +37,10 @@ export async function getResultLimit(): Promise<number> {
 export async function getSearchDebounceMs(): Promise<number> {
   return invoke<number>('get_search_debounce_ms');
 }
+
+/** First ~300 characters of `path`'s stored body text - used when a hit has
+ * no snippet (a filter-only query, or filename mode). `null` if `path` isn't
+ * indexed, or has no stored body at all (a META-tier hit). */
+export async function previewBody(path: string): Promise<string | null> {
+  return invoke<string | null>('preview_body', { path });
+}

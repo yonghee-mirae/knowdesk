@@ -3,6 +3,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::search_repo::SearchRepository;
+use crate::db::store::{DocumentStore, SqliteDocumentStore};
 use crate::DocId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +181,44 @@ impl DocumentRepository {
         conn.execute("DELETE FROM documents", [])?;
         Ok(())
     }
+
+    /// First `max_chars` characters of the body text stored for whatever
+    /// document `path` currently resolves to - a preview for a hit with no
+    /// snippet (a filter-only query, or filename mode, neither of which has a
+    /// keyword to build a snippet around, `docs/12_UI_Spec.md` C2). `None` if
+    /// `path` isn't indexed, or its document has no stored body at all (a
+    /// META-tier document, whose content was never extracted in the first
+    /// place - `core::index::pipeline`).
+    pub fn body_preview(
+        conn: &Connection,
+        path: &str,
+        max_chars: usize,
+    ) -> rusqlite::Result<Option<String>> {
+        let document_id: Option<String> = conn
+            .query_row(
+                "SELECT document_id FROM paths WHERE path = ?1",
+                params![path],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(document_id) = document_id else {
+            return Ok(None);
+        };
+        let body = SqliteDocumentStore { conn }.get_body(&document_id)?;
+        Ok(body.map(|b| truncate_chars(&b, max_chars)))
+    }
+}
+
+/// Truncates `text` to at most `max_chars` characters (not bytes - Korean
+/// text is multi-byte UTF-8), appending `...` if anything was actually cut.
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 #[cfg(test)]
@@ -239,5 +278,61 @@ mod tests {
         assert!(DocumentRepository::last_indexed_at(&db.conn)
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn body_preview_truncates_by_character_and_handles_missing_cases() {
+        let db = Db::open_in_memory().unwrap();
+
+        // Unknown path - not indexed at all.
+        assert_eq!(
+            DocumentRepository::body_preview(&db.conn, "/a/b.txt", 10).unwrap(),
+            None
+        );
+
+        DocumentRepository::upsert_document(
+            &db.conn,
+            &DocumentRecord {
+                document_id: "full1".to_string(),
+                file_size: 10,
+                text_bytes: 5,
+                index_tier: IndexTier::Full,
+            },
+        )
+        .unwrap();
+        DocumentRepository::upsert_path(
+            &db.conn,
+            &PathRecord {
+                path: "/a/규정.txt".to_string(),
+                document_id: "full1".to_string(),
+                filename: "규정.txt".to_string(),
+                extension: "txt".to_string(),
+                modified_at: None,
+            },
+        )
+        .unwrap();
+
+        // Indexed, but META (no body ever stored) - `put_body` deliberately
+        // not called here, matching `extract_and_index`'s `Err` branch.
+        assert_eq!(
+            DocumentRepository::body_preview(&db.conn, "/a/규정.txt", 10).unwrap(),
+            None
+        );
+
+        SqliteDocumentStore { conn: &db.conn }
+            .put_body("full1", "채권 발행 절차를 규정한다")
+            .unwrap();
+
+        // Longer than max_chars - truncated (by character count) with a
+        // trailing "...".
+        assert_eq!(
+            DocumentRepository::body_preview(&db.conn, "/a/규정.txt", 4).unwrap(),
+            Some("채권 발...".to_string())
+        );
+        // Shorter than max_chars - returned whole, no "...".
+        assert_eq!(
+            DocumentRepository::body_preview(&db.conn, "/a/규정.txt", 100).unwrap(),
+            Some("채권 발행 절차를 규정한다".to_string())
+        );
     }
 }

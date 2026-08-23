@@ -264,6 +264,20 @@ fn get_search_debounce_ms() -> Result<u32, String> {
         .map_err(|e| e.to_string())
 }
 
+/// A hit's `snippet` is `null` when there's no keyword to build one around -
+/// a filter-only query (e.g. `x:pdf`), or filename mode (never has one at
+/// all). The frontend calls this on demand, only for the hit currently shown
+/// in the preview pane, to fill in the document's opening text instead
+/// (`docs/12_UI_Spec.md` C2) - not for every row in the result list, which
+/// has no use for it (`frontend/src/components/kd-result-list.ts`).
+const BODY_PREVIEW_CHARS: usize = 300;
+
+#[tauri::command]
+fn preview_body(path: String) -> Result<Option<String>, String> {
+    let db = Db::open(&db_path()).map_err(|e| e.to_string())?;
+    DocumentRepository::body_preview(&db.conn, &path, BODY_PREVIEW_CHARS).map_err(|e| e.to_string())
+}
+
 /// Shows the "search" window (pre-created hidden at startup, `tauri.conf.json`'s
 /// `visible: false`) and gives it keyboard focus, or hides it again if it's
 /// already visible (Spotlight/PowerToys Run convention -
@@ -673,6 +687,7 @@ pub fn run() {
             get_theme,
             get_result_limit,
             get_search_debounce_ms,
+            preview_body,
         ])
         .setup(move |app| {
             // Tray-only background app - no Dock icon, no Cmd+Tab entry.

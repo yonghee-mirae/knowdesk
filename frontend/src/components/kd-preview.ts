@@ -1,7 +1,8 @@
 // Preview pane (`docs/12_UI_Spec.md` C2) - shows the selected result's
-// metadata and a highlighted body snippet. META-tier hits get the
-// "본문 미색인" notice instead of a snippet, since their body was never
-// extracted (`docs/04_Data_Model.md`).
+// metadata and a highlighted body snippet. Index tier (본문 색인/메타 색인) is
+// shown as an icon next to the filename, not a separate row - META-tier hits
+// get that icon instead of a snippet, since their body was never extracted
+// (`docs/04_Data_Model.md`).
 
 import type { SearchHit } from '../types';
 import { renderSnippet, escapeHtml } from '../core/snippet';
@@ -10,6 +11,9 @@ import { formatLocalDateTime } from '../core/datetime';
 
 export class KdPreview extends HTMLElement {
   private bodyEl: HTMLDivElement;
+  /** The hit currently shown, so a body-preview fetch that resolves after
+   * the user has already moved on (`showBodyPreview`) can tell it's stale. */
+  private currentPath: string | null = null;
 
   constructor() {
     super();
@@ -19,33 +23,40 @@ export class KdPreview extends HTMLElement {
         :host { display: block; overflow-y: auto; }
         :host([hidden]) { display: none; }
         .body { padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; }
-        .p-title { font-size: 16px; font-weight: 700; line-height: 1.4; text-wrap: balance; }
-        .p-path {
+        /* flex + align-items: baseline, not inline text + vertical-align -
+         * lines the icon's bottom edge up with the text's actual baseline
+         * reliably (an inline SVG's vertical-align keyword is inconsistent
+         * across engines and kept floating too high). */
+        .p-title {
+          display: flex;
+          align-items: baseline;
+          gap: 6px;
+          font-size: 16px;
+          font-weight: 700;
+          line-height: 1.4;
+        }
+        .p-title-text { min-width: 0; text-wrap: balance; }
+        /* Index tier (본문 색인/메타 색인) - a fixed binary today (SKIP-tier
+         * files never surface as a search hit at all, see types.ts), so one
+         * icon is enough; no separate notice line. */
+        .p-tier-icon { flex: none; color: var(--ink-faint); cursor: default; }
+        .p-tier-icon svg { display: block; }
+        /* Path + modified date, grouped into one metadata box (both are
+         * plain file metadata). */
+        .p-meta {
           font-family: var(--font-mono);
           font-size: 11.5px;
-          color: var(--ink-muted);
-          word-break: break-all;
-          background: var(--surface-2);
           border: 1px solid var(--border);
+        }
+        .p-meta-row {
+          background: var(--surface-2);
           padding: 8px 10px;
         }
-        .p-meta-grid {
-          display: flex;
-          gap: 24px;
-        }
-        .p-meta-item .k {
-          font-size: 10.5px;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          color: var(--ink-faint);
-        }
-        .p-meta-item .v {
-          font-family: var(--font-mono);
-          font-size: 12.5px;
-          color: var(--ink);
-          margin-top: 2px;
-          white-space: nowrap;
-        }
+        .p-meta-row + .p-meta-row { border-top: 1px solid var(--border); }
+        .p-meta-path { color: var(--ink-muted); word-break: break-all; }
+        .p-meta-date-row { display: flex; gap: 8px; }
+        .p-meta-label { flex: none; color: var(--ink-faint); }
+        .p-meta-value { color: var(--ink); }
         .p-snippet {
           font-size: 13.5px;
           line-height: 1.75;
@@ -53,7 +64,6 @@ export class KdPreview extends HTMLElement {
           padding-top: 14px;
           border-top: 1px solid var(--border);
         }
-        .p-meta-notice { font-size: 13px; color: var(--tier-meta); }
         mark {
           background: var(--mark-bg);
           color: var(--mark-ink);
@@ -70,28 +80,53 @@ export class KdPreview extends HTMLElement {
   /** Nothing to show: query is empty (`kd-syntax-help` covers that case and
    * this pane is hidden entirely) or the search found zero hits. */
   clear(): void {
+    this.currentPath = null;
     this.bodyEl.innerHTML = '';
   }
 
+  /** Renders everything known synchronously. If there's no snippet (a
+   * filter-only query, or filename mode - neither has a keyword to build one
+   * around) and the document actually has a body (FULL tier), the snippet
+   * area is left empty for `main.ts` to fill in via `showBodyPreview()` once
+   * it fetches the document's opening text (`docs/12_UI_Spec.md` C2) - a
+   * separate, on-demand call so the result list's every-row search response
+   * doesn't need to carry it. */
   showHit(hit: SearchHit): void {
-    const metaItem = (k: string, v: string): string =>
-      `<div class="p-meta-item"><div class="k">${escapeHtml(k)}</div><div class="v">${escapeHtml(v)}</div></div>`;
+    this.currentPath = hit.path;
+    const tier = hit.indexTier === 'FULL' ? MATCH_INFO.full : MATCH_INFO.meta;
 
     let html = '';
-    html += `<div class="p-title">${escapeHtml(hit.filename)}</div>`;
-    html += `<div class="p-path">${escapeHtml(hit.path)}</div>`;
-    html += '<div class="p-meta-grid">';
-    html += metaItem('색인 계층', hit.indexTier === 'FULL' ? '본문 색인' : '메타 색인');
-    html += metaItem('수정일', hit.modifiedAt ? formatLocalDateTime(hit.modifiedAt) : '-');
-    html += '</div>';
+    html += `<div class="p-title">
+      <span class="p-title-text">${escapeHtml(hit.filename)}</span>
+      <span class="p-tier-icon" title="${escapeHtml(tier.label)}">${tier.icon}</span>
+    </div>`;
+    html += `<div class="p-meta">
+      <div class="p-meta-row p-meta-path">${escapeHtml(hit.path)}</div>
+      <div class="p-meta-row p-meta-date-row">
+        <span class="p-meta-label">수정일</span>
+        <span class="p-meta-value">${hit.modifiedAt ? escapeHtml(formatLocalDateTime(hit.modifiedAt)) : '-'}</span>
+      </div>
+    </div>`;
 
-    if (hit.indexTier === 'META') {
-      html += `<div class="p-meta-notice">${MATCH_INFO.meta.icon} ${escapeHtml(MATCH_INFO.meta.label)}</div>`;
-    } else if (hit.snippet !== null) {
+    if (hit.snippet !== null) {
       html += `<div class="p-snippet">${renderSnippet(hit.snippet)}</div>`;
     }
 
     this.bodyEl.innerHTML = html;
+  }
+
+  /** Fills in the document's opening text fetched for `path` - a no-op if
+   * the preview has since moved on to a different hit (fast arrow-key
+   * navigation outrunning the fetch), the fetch found nothing to show, or a
+   * snippet is already showing (re-selecting the same still-pending hit
+   * twice must not append a second copy once both fetches land). */
+  showBodyPreview(path: string, text: string | null): void {
+    if (path !== this.currentPath || text === null) return;
+    if (this.bodyEl.querySelector('.p-snippet')) return;
+    const div = document.createElement('div');
+    div.className = 'p-snippet';
+    div.textContent = text; // Plain text - no `>>...<<` markers to render as marks.
+    this.bodyEl.appendChild(div);
   }
 }
 

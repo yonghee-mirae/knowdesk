@@ -141,16 +141,11 @@ export class KdResultList extends HTMLElement {
     this.listEl.innerHTML = hits
       .map((hit, index) => {
         const kind = badgeKindOf(hit, mode);
-        // Filename mode never has a snippet to begin with (`hit.snippet` is
-        // always null there) - the "본문 미색인" notice is content-mode-only
-        // for the same reason the stripe above is: content indexing status
-        // has nothing to do with a filename match.
-        const snippet =
-          mode === 'content' && hit.indexTier === 'META'
-            ? MATCH_INFO.meta.label
-            : hit.snippet !== null
-              ? renderSnippet(hit.snippet)
-              : '';
+        // A META-tier hit has no snippet (`hit.snippet` is null) - the row
+        // just shows the filename alone; index tier is surfaced in the
+        // preview pane instead (`kd-preview.ts`'s title-row icon), not
+        // repeated as text here.
+        const snippet = hit.snippet !== null ? renderSnippet(hit.snippet) : '';
         const rowClass = kind ? `row ${kind}` : 'row';
         const title = kind ? ` title="${escapeHtml(MATCH_INFO[kind].label)}"` : '';
         return `

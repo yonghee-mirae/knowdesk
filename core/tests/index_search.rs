@@ -1115,6 +1115,41 @@ fn skips_oversized_and_excluded_files() {
 }
 
 #[test]
+fn index_directory_with_progress_reports_done_and_total() {
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..3 {
+        std::fs::write(dir.path().join(format!("문서{i}.txt")), format!("내용 {i}")).unwrap();
+    }
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let tokenizer = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &tokenizer,
+        kiwi: None,
+    };
+
+    let mut calls: Vec<(usize, usize)> = Vec::new();
+    let outcome = pipeline
+        .index_directory_with_progress(dir.path(), |done, total| calls.push((done, total)))
+        .unwrap();
+
+    assert_eq!(outcome.full, 3);
+    assert_eq!(calls.len(), 3, "one callback call per file: {calls:?}");
+    for (_, total) in &calls {
+        assert_eq!(*total, 3, "total must stay fixed at the upfront file count");
+    }
+    // `done` counts up 1..=total, in order, regardless of file processing order.
+    let mut done_values: Vec<usize> = calls.iter().map(|(done, _)| *done).collect();
+    done_values.sort_unstable();
+    assert_eq!(done_values, vec![1, 2, 3]);
+}
+
+#[test]
 fn indexes_markdown_file_as_plain_text() {
     // `.md` is indexed as plain text, raw Markdown syntax included - no
     // Markdown-specific parsing (`TxtExtractor`'s doc comment).

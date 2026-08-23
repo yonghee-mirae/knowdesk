@@ -16,6 +16,7 @@ use knowdesk_core::index::watcher::FileWatcher;
 use knowdesk_core::nlp::bigram::BigramTokenizer;
 use knowdesk_core::nlp::kiwi::KiwiTokenizer;
 use knowdesk_core::nlp::Tokenizer;
+use knowdesk_core::scan::walker;
 use knowdesk_core::search::service::SqliteSearchService;
 use knowdesk_core::search::{
     MatchKind, SearchHit, SearchMode as CoreSearchMode, SearchRequest,
@@ -23,6 +24,7 @@ use knowdesk_core::search::{
 };
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::image::Image;
@@ -121,7 +123,7 @@ fn app_data_dir() -> PathBuf {
 
 /// `KNOWDESK_SETTINGS_PATH` overrides the settings file location, same convention as
 /// `KNOWDESK_DB_PATH` (`db_path()`). There's no Settings Window (TASK-704 was
-/// replaced with `open_settings_folder`, which just opens this file's folder) -
+/// replaced with `open_settings_file`, which just opens this file itself) -
 /// `settings.json` is a plain text file the user edits by hand.
 fn settings_path() -> PathBuf {
     if let Ok(path) = std::env::var("KNOWDESK_SETTINGS_PATH") {
@@ -216,20 +218,19 @@ fn open_parent_folder(app: AppHandle, path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// "설정" action (tray menu / search bar gear icon): there's no in-app
-/// Settings window (TASK-704) - opens the folder containing `settings.json`
-/// in the OS file manager instead, so editing that file directly (in any
-/// text editor) is the whole UI. `run()` makes sure the file actually exists
-/// with defaults before this could ever be called, so there's always
-/// something real to show here.
+/// "Settings" (tray menu): there's no in-app Settings window (TASK-704) -
+/// opens `settings.json` itself with the OS default program for that file
+/// type (a text editor, on every desktop OS this ships on) instead, so
+/// editing that file directly is the whole UI. `run()` makes sure the file
+/// actually exists with defaults before this could ever be called, so
+/// there's always something real to open here.
 #[tauri::command]
-fn open_settings_folder(app: AppHandle) -> Result<(), String> {
-    let path = settings_path();
-    let folder = path
-        .parent()
-        .ok_or_else(|| "No parent folder".to_string())?;
+fn open_settings_file(app: AppHandle) -> Result<(), String> {
     app.opener()
-        .open_path(folder.to_string_lossy().into_owned(), None::<String>)
+        .open_path(
+            settings_path().to_string_lossy().into_owned(),
+            None::<String>,
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -276,6 +277,16 @@ const BODY_PREVIEW_CHARS: usize = 300;
 fn preview_body(path: String) -> Result<Option<String>, String> {
     let db = Db::open(&db_path()).map_err(|e| e.to_string())?;
     DocumentRepository::body_preview(&db.conn, &path, BODY_PREVIEW_CHARS).map_err(|e| e.to_string())
+}
+
+/// "색인 중 (done/total)" (TASK-904) - `None` while idle. Polled by the
+/// search window, not pushed, same reasoning as `get_theme`'s "read on load +
+/// focus" pattern - except this one keeps polling on an interval too while a
+/// scan is actually in progress (`main.ts`), since unlike a settings value it
+/// can change every moment the window is sitting open.
+#[tauri::command]
+fn get_index_progress(progress: tauri::State<IndexProgressState>) -> Option<IndexProgress> {
+    *progress.lock().unwrap()
 }
 
 /// Shows the "search" window (pre-created hidden at startup, `tauri.conf.json`'s
@@ -401,11 +412,17 @@ fn spawn_index_worker(
     config: Config,
     reset_rx: mpsc::Receiver<()>,
     on_settings_reload: impl Fn(&Config, &Config) + Send + 'static,
+    progress: IndexProgressState,
 ) {
     thread::spawn(move || {
-        if let Err(e) =
-            run_index_worker(db_path, settings_path, config, reset_rx, on_settings_reload)
-        {
+        if let Err(e) = run_index_worker(
+            db_path,
+            settings_path,
+            config,
+            reset_rx,
+            on_settings_reload,
+            progress,
+        ) {
             eprintln!("Index worker failed: {e}");
         }
     });
@@ -443,6 +460,7 @@ fn run_index_worker(
     initial_config: Config,
     reset_rx: mpsc::Receiver<()>,
     on_settings_reload: impl Fn(&Config, &Config),
+    progress: IndexProgressState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let db = Db::open(&db_path)?;
     let extractors = default_extractors();
@@ -464,6 +482,7 @@ fn run_index_worker(
         &mut folder_watcher,
         &mut watched,
         &config,
+        &progress,
     );
 
     // Watches `settings.json`'s own folder (not the file directly - `notify`
@@ -511,6 +530,7 @@ fn run_index_worker(
                     &mut folder_watcher,
                     &mut watched,
                     &config,
+                    &progress,
                 );
             }
         }
@@ -538,6 +558,7 @@ fn run_index_worker(
                         &mut folder_watcher,
                         &mut watched,
                         &config,
+                        &progress,
                     );
                 }
                 Err(e) => eprintln!("Failed to reset index: {e}"),
@@ -576,6 +597,18 @@ fn run_index_worker(
     }
 }
 
+/// "색인 중 (done/total)" (TASK-904, `docs/12_UI_Spec.md` C5) - `None` while
+/// idle (nothing currently being scanned). Shared between the index worker
+/// thread (writer, via `apply_folder_diff`) and the `get_index_progress`
+/// command (reader, polled by the search window).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+struct IndexProgress {
+    done: usize,
+    total: usize,
+}
+
+type IndexProgressState = Arc<Mutex<Option<IndexProgress>>>;
+
 /// Diffs `config.watched_folders` against `current` (updated in place to
 /// match): newly listed folders get an initial scan and become watched;
 /// removed ones stop being watched. Already-indexed documents from a removed
@@ -585,6 +618,16 @@ fn run_index_worker(
 /// with nothing configured yet doesn't pay Kiwi's memory cost for nothing
 /// (`SearchWorker`'s doc comment has the full reasoning on why Kiwi can't
 /// just be shared across threads instead).
+///
+/// While scanning newly-added folders, keeps `progress` updated with a
+/// running total across all of them together (not reset per folder) - matters
+/// most at startup, when every folder in `watched_folders` becomes "added" in
+/// the same call, so the counter should read as one contiguous scan rather
+/// than jumping back to 0 partway through.
+#[allow(clippy::too_many_arguments)] // Already a private helper called from
+                                     // exactly 3 sites inside `run_index_worker`, all right next to each other -
+                                     // splitting these into a struct wouldn't make any of those call sites
+                                     // clearer, just move the same fields one level of indirection away.
 fn apply_folder_diff(
     db: &Db,
     extractors: &[Box<dyn ContentExtractor>],
@@ -593,6 +636,7 @@ fn apply_folder_diff(
     watcher: &mut FileWatcher,
     current: &mut Vec<PathBuf>,
     config: &Config,
+    progress: &IndexProgressState,
 ) {
     let desired = &config.watched_folders;
     let added: Vec<&PathBuf> = desired.iter().filter(|f| !current.contains(f)).collect();
@@ -612,15 +656,33 @@ fn apply_folder_diff(
         bigram,
         kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
     };
+    // Scanned upfront (a plain directory walk, no file content read yet) so
+    // the progress counter reflects the whole batch's total from the start,
+    // not just whichever folder happens to be scanning right now.
+    let total: usize = added.iter().map(|f| walker::scan(f).len()).sum();
+    let mut done_so_far = 0;
+    if total > 0 {
+        *progress.lock().unwrap() = Some(IndexProgress { done: 0, total });
+    }
     for folder in added {
-        match pipeline.index_directory(folder) {
-            Ok(outcome) => eprintln!(
-                "Indexed {}: {} full-text, {} metadata, {} skipped",
-                folder.display(),
-                outcome.full,
-                outcome.meta,
-                outcome.skip
-            ),
+        let base = done_so_far;
+        let result = pipeline.index_directory_with_progress(folder, |done, _folder_total| {
+            *progress.lock().unwrap() = Some(IndexProgress {
+                done: base + done,
+                total,
+            });
+        });
+        match result {
+            Ok(outcome) => {
+                done_so_far += (outcome.full + outcome.meta + outcome.skip) as usize;
+                eprintln!(
+                    "Indexed {}: {} full-text, {} metadata, {} skipped",
+                    folder.display(),
+                    outcome.full,
+                    outcome.meta,
+                    outcome.skip
+                )
+            }
             Err(e) => {
                 eprintln!("Failed to index {}: {e}", folder.display());
                 continue;
@@ -630,6 +692,7 @@ fn apply_folder_diff(
             eprintln!("Failed to watch {}: {e}", folder.display());
         }
     }
+    *progress.lock().unwrap() = None; // Idle again - the whole batch is done.
     for folder in removed {
         if let Err(e) = watcher.unwatch(folder) {
             eprintln!("Failed to unwatch {}: {e}", folder.display());
@@ -648,7 +711,7 @@ pub fn run() {
     }
     let settings_path = settings_path();
     // First run: create `settings.json` with defaults so there's always a
-    // real file for "설정" (`open_settings_folder`) to point at, and so
+    // real file for "Settings" (`open_settings_file`) to open, and so
     // hand-editing it means adding to something that already exists rather
     // than guessing the whole shape from scratch.
     if !settings_path.exists() {
@@ -675,6 +738,10 @@ pub fn run() {
     // wipe belongs to the index worker thread, not the UI thread the tray
     // callback runs on.
     let (reset_tx, reset_rx) = mpsc::channel::<()>();
+    // "색인 중 (done/total)" (TASK-904) - `.manage()`d below for
+    // `get_index_progress` to read, and a clone moved into the index worker
+    // thread (started in `.setup()`, once an `AppHandle` exists) to write.
+    let index_progress: IndexProgressState = Arc::new(Mutex::new(None));
 
     tauri::Builder::default()
         // Must be registered first (upstream recommendation) - a second launch
@@ -688,15 +755,17 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(worker)
+        .manage(index_progress.clone())
         .invoke_handler(tauri::generate_handler![
             search,
             open_path,
             open_parent_folder,
-            open_settings_folder,
+            open_settings_file,
             get_theme,
             get_result_limit,
             get_search_debounce_ms,
             preview_body,
+            get_index_progress,
         ])
         .setup(move |app| {
             // Tray-only background app - no Dock icon, no Cmd+Tab entry.
@@ -740,6 +809,7 @@ pub fn run() {
                         }
                     }
                 },
+                index_progress,
             );
 
             // The tray is the only thing keeping the app around once the
@@ -807,7 +877,7 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "settings" => {
-                        let _ = open_settings_folder(app.clone());
+                        let _ = open_settings_file(app.clone());
                     }
                     "statistics" => {
                         let text = compute_stats(&stats_db_path)
@@ -982,6 +1052,7 @@ mod tests {
             config,
             reset_rx,
             |_, _| {},
+            Arc::new(Mutex::new(None)),
         );
 
         std::thread::sleep(std::time::Duration::from_secs(2));
@@ -1073,6 +1144,7 @@ mod tests {
             config,
             reset_rx,
             |_, _| {},
+            Arc::new(Mutex::new(None)),
         );
 
         std::thread::sleep(std::time::Duration::from_secs(2));
@@ -1145,5 +1217,55 @@ mod tests {
         let stats = compute_stats(&db_path).unwrap();
         assert!(stats.contains("Total: 0 documents"), "{stats}");
         assert!(stats.contains("Last indexed: never"), "{stats}");
+    }
+
+    /// `apply_folder_diff` scanning two newly-added folders at once (the
+    /// startup case - every folder in `watched_folders` is "added" in the
+    /// same call) must index both and leave `progress` idle (`None`)
+    /// afterward, not stuck showing a stale "done/total" from mid-scan
+    /// (TASK-904).
+    #[test]
+    fn apply_folder_diff_indexes_multiple_added_folders_and_clears_progress() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        std::fs::write(dir_a.path().join("a1.txt"), "채권 발행").unwrap();
+        std::fs::write(dir_a.path().join("a2.txt"), "이사회 결의").unwrap();
+        std::fs::write(dir_b.path().join("b1.txt"), "예산 승인").unwrap();
+
+        let db = Db::open_in_memory().unwrap();
+        let extractors = default_extractors();
+        let bigram = BigramTokenizer;
+        let mut kiwi: Option<KiwiTokenizer> = None;
+        let mut watcher = FileWatcher::new::<PathBuf>(&[], Duration::from_millis(3000)).unwrap();
+        let mut watched: Vec<PathBuf> = Vec::new();
+        let config = Config {
+            watched_folders: vec![dir_a.path().to_path_buf(), dir_b.path().to_path_buf()],
+            ..Config::default()
+        };
+        let progress: IndexProgressState = Arc::new(Mutex::new(None));
+
+        apply_folder_diff(
+            &db,
+            &extractors,
+            &bigram,
+            &mut kiwi,
+            &mut watcher,
+            &mut watched,
+            &config,
+            &progress,
+        );
+
+        assert_eq!(
+            *progress.lock().unwrap(),
+            None,
+            "must be idle again once the whole batch finishes, not left mid-scan"
+        );
+        assert_eq!(watched.len(), 2);
+        let tiers = DocumentRepository::count_by_tier(&db.conn).unwrap();
+        let full = tiers
+            .iter()
+            .find(|(tier, _)| tier == "FULL")
+            .map_or(0, |(_, count)| *count);
+        assert_eq!(full, 3, "all 3 files across both folders should be indexed");
     }
 }

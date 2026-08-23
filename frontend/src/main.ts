@@ -15,13 +15,19 @@ import type { SearchHit, SearchMode } from './types';
 void loadAndApplyTheme();
 void loadResultLimit();
 void loadSearchDebounceMs();
+void refreshIndexProgress();
 // Re-checks on every focus (shown via the tray/hotkey) - see
 // `loadAndApplyTheme`'s doc comment for why that's needed instead of a
 // push-based update. Same reasoning applies to `resultLimit`/`searchDebounceMs`.
+// `refreshIndexProgress` also keeps re-polling on its own interval while a
+// scan is actually in progress (started/stopped inside itself) - unlike a
+// settings value, this can change every moment the window is sitting open,
+// not just when it regains focus.
 window.addEventListener('focus', () => {
   void loadAndApplyTheme();
   void loadResultLimit();
   void loadSearchDebounceMs();
+  void refreshIndexProgress();
 });
 
 // The footer hint bar's "폴더 열기"/"경로 복사" shortcuts are hardcoded as
@@ -63,7 +69,15 @@ const maybeSearchBar = document.querySelector<KdSearchBar>('kd-search-bar');
 const maybeResultList = document.querySelector<KdResultList>('kd-result-list');
 const maybeSyntaxHelp = document.querySelector<KdSyntaxHelp>('kd-syntax-help');
 const maybePreview = document.querySelector<KdPreview>('kd-preview');
-if (!maybeBody || !maybeSearchBar || !maybeResultList || !maybeSyntaxHelp || !maybePreview) {
+const maybeIndexProgress = document.querySelector<HTMLDivElement>('#index-progress');
+if (
+  !maybeBody ||
+  !maybeSearchBar ||
+  !maybeResultList ||
+  !maybeSyntaxHelp ||
+  !maybePreview ||
+  !maybeIndexProgress
+) {
   throw new Error('KnowDesk: required elements missing from index.html');
 }
 const body = maybeBody;
@@ -71,6 +85,43 @@ const searchBar = maybeSearchBar;
 const resultList = maybeResultList;
 const syntaxHelp = maybeSyntaxHelp;
 const preview = maybePreview;
+const indexProgressEl = maybeIndexProgress;
+
+let indexProgressTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopIndexProgressPolling(): void {
+  if (indexProgressTimer !== null) {
+    clearInterval(indexProgressTimer);
+    indexProgressTimer = null;
+  }
+}
+
+function startIndexProgressPolling(): void {
+  if (indexProgressTimer !== null) return; // Already polling.
+  indexProgressTimer = setInterval(() => void refreshIndexProgress(), 1000);
+}
+
+/** "색인 중 (done / total)" (TASK-904) - `null` while idle hides the banner
+ * and stops the polling interval; a real value shows it and (re)starts
+ * polling, since indexing progress keeps changing while the window sits
+ * open, unlike a settings value that's only worth re-checking on focus. */
+async function refreshIndexProgress(): Promise<void> {
+  let progress = null;
+  try {
+    progress = await backend.getIndexProgress();
+  } catch {
+    // Best-effort - an IPC hiccup shouldn't spam the UI with an error.
+  }
+  if (progress) {
+    indexProgressEl.hidden = false;
+    indexProgressEl.textContent = `색인 중 (${progress.done.toLocaleString()} / ${progress.total.toLocaleString()})`;
+    startIndexProgressPolling();
+  } else {
+    indexProgressEl.hidden = true;
+    indexProgressEl.textContent = '';
+    stopIndexProgressPolling();
+  }
+}
 
 const state = {
   mode: 'content' as SearchMode,
@@ -232,6 +283,15 @@ window.addEventListener('keydown', (e) => {
   if (withMod && e.key === '2') {
     e.preventDefault();
     setMode('filename');
+    return;
+  }
+
+  // Same action as the tray menu's "Settings" - opens settings.json with the
+  // OS default program. Cmd/Ctrl+, is the conventional "open preferences"
+  // shortcut on both macOS and Windows.
+  if (withMod && e.key === ',') {
+    e.preventDefault();
+    void backend.openSettingsFile();
     return;
   }
 

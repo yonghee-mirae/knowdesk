@@ -43,10 +43,28 @@ pub struct IndexPipeline<'a> {
 impl<'a> IndexPipeline<'a> {
     /// Scans and indexes all files under `root`, and returns the counts per tier.
     pub fn index_directory(&self, root: &Path) -> Result<IndexOutcome, IndexError> {
+        self.index_directory_with_progress(root, |_, _| {})
+    }
+
+    /// Same as `index_directory`, but calls `on_progress(done, total)` after
+    /// every file (`done` includes the one just finished, regardless of
+    /// tier - `total` is the file count under `root`, known upfront since
+    /// `walker::scan` already returns a materialized list). Used by
+    /// `src-tauri`'s "색인 중 (N/M)" indicator (TASK-904,
+    /// `docs/12_UI_Spec.md` C5) during the initial scan of a newly-added
+    /// watched folder.
+    pub fn index_directory_with_progress(
+        &self,
+        root: &Path,
+        mut on_progress: impl FnMut(usize, usize),
+    ) -> Result<IndexOutcome, IndexError> {
+        let paths = walker::scan(root);
+        let total = paths.len();
         let mut outcome = IndexOutcome::default();
-        for path in walker::scan(root) {
+        for (i, path) in paths.into_iter().enumerate() {
             let tier = self.index_file(&path)?;
             outcome.add(tier);
+            on_progress(i + 1, total);
         }
         Ok(outcome)
     }

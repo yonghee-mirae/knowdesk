@@ -61,8 +61,8 @@ pub struct Config {
     pub db_path: PathBuf,
     pub max_file_size_mb: u64,
     /// Folders to index and continuously watch. There's no in-app UI for this
-    /// (TASK-704 — replaced with a "설정 파일 폴더 열기" action instead of a
-    /// Settings Window, `src-tauri`'s `open_settings_folder`) - populated by
+    /// (TASK-704 — replaced with a "설정 파일 열기" action instead of a
+    /// Settings Window, `src-tauri`'s `open_settings_file`) - populated by
     /// hand-editing `settings.json` in a text editor. Empty by default:
     /// nothing is indexed until at least one folder is listed here.
     pub watched_folders: Vec<PathBuf>,

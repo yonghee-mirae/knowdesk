@@ -23,6 +23,12 @@ export async function copyPath(path: string): Promise<void> {
   await writeText(path);
 }
 
+/** "Settings" (tray menu, and `Cmd/Ctrl+,` in the search window) - opens
+ * `settings.json` itself with the OS default program for that file type. */
+export async function openSettingsFile(): Promise<void> {
+  await invoke('open_settings_file');
+}
+
 /** Reads the `theme` field from `settings.json` (`core::config::Theme`). */
 export async function getTheme(): Promise<Theme> {
   return invoke<Theme>('get_theme');
@@ -43,4 +49,16 @@ export async function getSearchDebounceMs(): Promise<number> {
  * indexed, or has no stored body at all (a META-tier hit). */
 export async function previewBody(path: string): Promise<string | null> {
   return invoke<string | null>('preview_body', { path });
+}
+
+export interface IndexProgress {
+  done: number;
+  total: number;
+}
+
+/** How many of the files under a newly-added watched folder have been
+ * scanned so far - `null` while idle (nothing currently being scanned).
+ * Polled, not pushed (`docs/12_UI_Spec.md` C5, TASK-904). */
+export async function getIndexProgress(): Promise<IndexProgress | null> {
+  return invoke<IndexProgress | null>('get_index_progress');
 }

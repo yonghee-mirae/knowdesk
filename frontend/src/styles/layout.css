@@ -45,6 +45,18 @@ body {
   overflow: hidden;
 }
 
+/* Minimal status indicator, not an onboarding wizard (TASK-904,
+   `docs/12_UI_Spec.md` C5) - shown only while an initial folder scan is
+   actually running (`main.ts` toggles `hidden`), gone once it's caught up. */
+.kd-index-progress {
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
 .kd-body {
   flex: 1;
   min-height: 0;

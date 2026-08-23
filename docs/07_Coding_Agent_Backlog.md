@@ -156,6 +156,8 @@ TASK-704 Settings Window → "설정 파일 폴더 열기"로 대체 (완료, 20
 
 ⚠️ **버그 발견·제거(2026-08-22):** 되돌리기 전 버전에서 "폴더 추가" 클릭 시 앱 전체가 멈추는 문제가 실제로 발생했다. 원인: `tauri_plugin_dialog`의 `blocking_pick_folder()`를 **동기(non-async)** `#[tauri::command]` 안에서 호출함 — 동기 커맨드의 본문은 IPC 콜백이 온 스레드(WKWebView 기준 메인 스레드)에서 그대로 실행되는데, `blocking_pick_folder()`는 실제 다이얼로그 표시를 `run_on_main_thread`로 메인 스레드에 넘기고 그 결과를 **동기적으로 대기**한다 — 호출자가 이미 메인 스레드면 그 대기가 영원히 안 풀리는 데드락이었다. 기능 자체를 없애면서 이 버그도 같이 사라졌다.
 
+⚠️ **폴더 대신 파일을 직접 열도록 변경 (2026-08-24):** `open_settings_folder`(폴더를 열어줌) → `open_settings_file`(`settings.json` 파일 자체를 OS 기본 프로그램으로 바로 염)로 변경 - `parent()`로 폴더 경로를 구하는 중간 단계를 없애고 `app.opener().open_path()`에 파일 경로를 직접 넘김. 한 클릭 덜 들도록.
+
 ⚠️ **버그 발견·수정 (2026-08-24):** `file_watch_debounce_ms`를 설정값으로 빼면서 발견 - `settings.json`에서 폴더를 지운 직후 그 폴더에 파일을 하나 쓰면(`index_worker_applies_settings_file_changes_live` 테스트가 정확히 이 순서), `notify`가 이미 큐에 넣어둔 그 생성 이벤트가 `apply_folder_diff`의 `unwatch()` 호출과 무관하게 그대로 살아남아 결국 색인돼버리는 경쟁 상태가 실제로 있었다 - `unwatch()`는 앞으로의 이벤트만 막고, 이미 채널에 들어온 이벤트를 되돌려 지우지는 않기 때문. 설정 파일 워처의 debounce를 3000ms→200ms로 줄이면서 타이밍이 바뀌어 이 경쟁이 매번 재현되는 쪽으로 굳어져 발견됨(전엔 우연히 안전한 순서로 풀렸을 뿐). 근본 수정: `run_index_worker`가 `folder_watcher`에서 받은 이벤트를 색인하기 직전, 그 경로가 **현재** `watched` 목록 아래에 있는지 다시 한번 필터링 - 타이밍에 의존하지 않는 결정적 수정.
 
 ⚠️ **설정값 완전성 재검토 (2026-08-24):** 폐기된 Settings Window mockup(`12_UI_Spec.md` C5)에 있던 항목들이 실제로 `settings.json`에 다 반영됐는지 전수 점검하고, 빠져 있던 것들을 추가했다 — `core::config::Config`에 `excluded_extensions`/`excluded_temp_patterns`(기존엔 고정 상수), `hotkey`(TASK-802 참조), `result_limit`(기존엔 프론트엔드 상수) 4개 필드 신설. `색인 초기화`는 값이 아니라 동작이라 트레이 메뉴 액션("Reset Index")으로 별도 구현(아래 Tray 섹션). `색인 DB 저장 위치`는 이미 확정된 배제 결정(`core/src/config.rs`의 `db_path` `#[serde(skip)]`)을 그대로 유지, `시작 시 자동 실행`은 새 의존성이 필요한 별도 기능이라 이번 범위에서 제외, `색인 스로틀링 파라미터`는 기존 비노출 결정 유지 - 자세한 표는 `12_UI_Spec.md` C5 참조.
@@ -198,7 +200,9 @@ TASK-901 Statistics Service (완료, 2026-08-24)
 
 TASK-902 Log Export → **폐기 (2026-08-24)** - 불필요하다고 판단, 구현된 적 없음.
 
-TASK-904 초기 색인 진행률 표시 — 온보딩 위저드 아님, 진행률 + "색인 중" 상태 문구만 (`KnowDesk_추가검토사항.md` E-2 참조)
+TASK-904 초기 색인 진행률 표시 (완료, 2026-08-24) — 온보딩 위저드 아님, 진행률 + "색인 중" 상태 문구만 (`KnowDesk_추가검토사항.md` E-2 참조)
+
+⚠️ **구현:** `core::index::pipeline::IndexPipeline::index_directory_with_progress`(`index_directory`가 내부적으로 호출하는 기존 메서드는 그대로 유지, 새 오버로드만 추가) - `walker::scan`이 이미 전체 목록을 한 번에 반환하므로 총 개수를 미리 알 수 있어, 파일마다 `on_progress(done, total)` 콜백을 부른다. `apply_folder_diff`가 이 콜백으로 `Arc<Mutex<Option<{done, total}>>>` 공유 상태를 갱신 - 여러 폴더가 한 번에 "added"되는 경우(앱 시작 시 `watched_folders`를 전부 처음 스캔하는 경우가 정확히 이 상황)에도 폴더별로 0으로 리셋되지 않고 하나의 연속된 총합으로 보이도록 전체 폴더의 파일 수를 미리 합산. 스캔이 전부 끝나면 다시 `None`(idle)으로. `get_index_progress` 커맨드로 검색창이 폴링(테마처럼 포커스 시점에만 다시 읽는 게 아니라, 진행 중일 때는 1초 간격으로도 계속 재확인 - 설정값과 달리 창이 떠 있는 동안 계속 바뀌는 값이라서). 트레이 hover 텍스트가 아니라 검색창 상단 배너로 구현(`index.html`의 `#index-progress`) - 트레이 툴팁을 나중에 갱신하려면 트레이 핸들을 따로 보관해야 해서 더 복잡함.
 
 ---
 

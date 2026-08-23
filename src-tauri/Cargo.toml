@@ -42,5 +42,11 @@ knowdesk-core = { path = "../core" }
 # integration lives in src-tauri, never in `core`).
 dirs = "6"
 
+# `NSApplication.activateIgnoringOtherApps` (`activate_app()`) - already in the
+# dependency graph transitively via `tauri`, pinned here to call it directly.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSResponder"] }
+
 [dev-dependencies]
 tempfile = "3"

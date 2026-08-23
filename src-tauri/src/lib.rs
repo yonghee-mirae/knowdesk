@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::image::Image;
-use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
@@ -375,6 +375,24 @@ fn show_search_window(app: &AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+/// Activates the app, making it the frontmost app. Called from the "about"
+/// tray menu handler, after the tray menu has already closed - this app
+/// runs with `ActivationPolicy::Accessory` (see `run()`'s `.setup()`), so it
+/// never becomes the active app on its own, and the About dialog would
+/// otherwise open behind whatever app currently has focus instead of coming
+/// to the front.
+/// Deliberately NOT called any earlier (e.g. on the tray icon's
+/// right-mouse-down, before the menu opens) - activating the app while the
+/// tray's context menu is opening/open makes macOS cancel that menu's
+/// tracking session immediately, so the whole menu flashes and closes
+/// instead of staying open.
+#[cfg(target_os = "macos")]
+fn activate_app() {
+    let mtm = objc2::MainThreadMarker::new().expect("menu events are handled on the main thread");
+    #[allow(deprecated)] // `NSApp.activate` (macOS 14+) has no equivalent for older macOS versions
+    objc2_app_kit::NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
 }
 
 /// Registers `hotkey` (`tauri-plugin-global-shortcut` string syntax, e.g.
@@ -920,28 +938,13 @@ pub fn run() {
             let reset_index_item =
                 MenuItem::with_id(app, "reset_index", "Reset Index", true, None::<&str>)?;
             let separator_2 = PredefinedMenuItem::separator(app)?;
-            // `tauri dev` runs the binary outside a proper .app bundle, so
-            // there's no Info.plist-declared icon for the OS to fall back
-            // on - without an explicit icon here, the About panel shows a
-            // generic placeholder (a plain folder icon) instead of KnowDesk's
-            // icon. name/version are left unset (`..Default::default()`) so
-            // the OS fills those in from the bundle itself once packaged,
-            // rather than us duplicating a value it already knows.
-            // `copyright` is the one AboutMetadata field every platform's
-            // native About panel renders (macOS's `authors`/`comments` and
-            // Windows/Linux's `credits` are each unsupported on some
-            // platform) - reused here to show developer credit as a plain
-            // line under the version, the same everywhere.
-            let about_icon = Image::from_bytes(include_bytes!("../icons/icon.png"))?;
-            let about_item = PredefinedMenuItem::about(
-                app,
-                Some("About"),
-                Some(AboutMetadata {
-                    icon: Some(about_icon),
-                    copyright: Some("Developed by Yonghee Yu".to_string()),
-                    ..Default::default()
-                }),
-            )?;
+            // A plain `MenuItem` (handled below in `on_menu_event`), not
+            // `PredefinedMenuItem::about` - a `PredefinedMenuItem` action
+            // runs natively and never reaches `on_menu_event`, but the
+            // dialog shown here needs the app activated first to reliably
+            // appear on top (see `activate_app()`), which only fires
+            // cleanly once selection has already closed the tray menu.
+            let about_item = MenuItem::with_id(app, "about", "About", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let tray_menu = Menu::with_items(
                 app,
@@ -1013,6 +1016,22 @@ pub fn run() {
                                     let _ = reset_tx.send(());
                                 }
                             });
+                    }
+                    "about" => {
+                        // Activated here, after the tray menu selection has
+                        // already closed the menu - see `activate_app()` for
+                        // why it must not happen any earlier.
+                        #[cfg(target_os = "macos")]
+                        activate_app();
+                        let text = format!(
+                            "Version {}\nDeveloped by Yonghee Yu",
+                            env!("CARGO_PKG_VERSION")
+                        );
+                        app.dialog()
+                            .message(text)
+                            .title("About KnowDesk")
+                            .kind(MessageDialogKind::Info)
+                            .show(|_| {});
                     }
                     "quit" => app.exit(0),
                     _ => {}

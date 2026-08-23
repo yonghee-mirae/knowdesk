@@ -75,6 +75,7 @@ Your Knowledge, On Your Desk.
 - **Settings** — `settings.json`을 기본 편집기로 열기
 - **Statistics** — 색인된 문서 수(본문 색인/메타 색인), 색인 DB 용량, 마지막 색인 시각을 보여줌
 - **Reset Index** — 색인을 전부 지우고 감시 중인 모든 폴더를 처음부터 다시 색인 (확인 대화상자 필요, 되돌릴 수 없음)
+- **About** — OS 기본 정보 창(앱 이름·버전·개발자 정보, OS별 표준 형식)
 - **Quit** — 완전 종료
 
 ---

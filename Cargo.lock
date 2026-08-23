@@ -2521,7 +2521,7 @@ dependencies = [
 
 [[package]]
 name = "knowdesk-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2532,7 +2532,7 @@ dependencies = [
 
 [[package]]
 name = "knowdesk-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "calamine",
@@ -2557,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "knowdesk-tauri"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dirs 6.0.0",
  "knowdesk-core",

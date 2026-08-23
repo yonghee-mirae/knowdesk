@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::image::Image;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
@@ -920,6 +920,28 @@ pub fn run() {
             let reset_index_item =
                 MenuItem::with_id(app, "reset_index", "Reset Index", true, None::<&str>)?;
             let separator_2 = PredefinedMenuItem::separator(app)?;
+            // `tauri dev` runs the binary outside a proper .app bundle, so
+            // there's no Info.plist-declared icon for the OS to fall back
+            // on - without an explicit icon here, the About panel shows a
+            // generic placeholder (a plain folder icon) instead of KnowDesk's
+            // icon. name/version are left unset (`..Default::default()`) so
+            // the OS fills those in from the bundle itself once packaged,
+            // rather than us duplicating a value it already knows.
+            // `copyright` is the one AboutMetadata field every platform's
+            // native About panel renders (macOS's `authors`/`comments` and
+            // Windows/Linux's `credits` are each unsupported on some
+            // platform) - reused here to show developer credit as a plain
+            // line under the version, the same everywhere.
+            let about_icon = Image::from_bytes(include_bytes!("../icons/icon.png"))?;
+            let about_item = PredefinedMenuItem::about(
+                app,
+                Some("About"),
+                Some(AboutMetadata {
+                    icon: Some(about_icon),
+                    copyright: Some("Developed by Yonghee Yu".to_string()),
+                    ..Default::default()
+                }),
+            )?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let tray_menu = Menu::with_items(
                 app,
@@ -929,6 +951,7 @@ pub fn run() {
                     &separator_1,
                     &reset_index_item,
                     &separator_2,
+                    &about_item,
                     &quit_item,
                 ],
             )?;

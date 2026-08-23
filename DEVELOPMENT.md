@@ -97,6 +97,19 @@ rm ./samples/새문서.txt                # 잠시 후 색인에서도 사라짐
 
 `src-tauri/` + `frontend/`가 Phase C의 실제 검색창 구현이다(`docs/12_UI_Spec.md` C1 검색창 + 결과 리스트 + 프리뷰). 브라우저 프로토타입(`docs/06_Development_Roadmap.md` Phase C 착수 전 만든 목업)에서 검증한 상호작용을 실제 `knowdesk-core` 검색과 연결한 것이다.
 
+### 플랫폼별 개발 실행
+
+`tauri dev`와 `knowdesk-cli` 모두 PDFium/Kiwi 네이티브 라이브러리 경로를 환경 변수로 필요로 한다(위 "수동 테스트" 참조). 저장소 루트의 `env`(macOS/Linux, bash) / `env.ps1`(Windows, PowerShell)이 `.pdfium/`, `.kiwi/`에 압축을 풀어둔 걸 전제로 그 경로들을 자동 설정해준다 — 매번 직접 `export`하지 않고 셸 세션마다 한 번 "닷소싱"하면 된다.
+
+| 플랫폼 | 셸 | 명령 |
+|---|---|---|
+| macOS / Linux | bash/zsh | `source ./env` |
+| Windows | PowerShell | `. .\env.ps1` |
+
+Windows는 `env.ps1` 안에 남아 있는 두 가지 미확인 사항에 주의해야 한다: PDFium Windows 배포판의 실제 폴더명(`.pdfium\bin`으로 가정했으나 미검증 — macOS/Linux는 `lib/`로 확인됨), 그리고 Kiwi 설치 스크립트(`kiwi-rs`)가 만드는 `.kiwi\lib\kiwi.dll` 경로(mac/Linux의 `libkiwi.{so,dylib}`와 달리 `lib` 접두사가 없음). 압축을 풀거나 설치한 뒤 실제 경로가 스크립트의 가정과 맞는지 먼저 확인할 것.
+
+이후 플랫폼과 무관하게 동일하게 실행한다:
+
 ```bash
 npm install
 npm --prefix frontend install
@@ -117,3 +130,11 @@ KNOWDESK_DB_PATH="$(pwd)/samples.db" npm run tauri dev
 프로토타입과 의도적으로 다른 점: 폰트 — PRD의 "인터넷 연결 없이 동작" 원칙 때문에 프로토타입의 Google Fonts(IBM Plex) 대신 OS 기본 한글 폰트를 쓴다.
 
 모두 반영 완료(2026-08-23 기준): 설정(⚙) 버튼은 `settings.json`을 OS 기본 편집기로 여는 동작(TASK-704 — Settings Window 대신 파일 직접 열기로 대체), 검색창 상단 색인 진행률 배너(TASK-904)와 트레이 "Statistics" 액션(TASK-901), 트레이 메뉴·전역 단축키(TASK-801/802)까지 전부 구현돼 있다. 패키징된 `.app`/설치판을 그대로 실행해도 트레이 아이콘과 전역 단축키로 창을 띄울 수 있다 - `npm run tauri dev`는 개발 중에만 필요하다.
+
+### 패키징
+
+| 플랫폼 | 상태 | 방법 |
+|---|---|---|
+| macOS | 완료 (2026-08-23, `docs/06_Development_Roadmap.md` Phase D3) | `npm run tauri build` → `.app`/`.dmg` 생성. `src-tauri/tauri.conf.json`의 `bundle.resources`가 PDFium/Kiwi 네이티브 라이브러리·모델을 `Contents/Resources/native/`에 자동 동봉하고, 실행 시 `set_bundled_native_lib_env_vars`(`src-tauri/src/lib.rs`, macOS 전용)가 그 경로로 `KNOWDESK_PDFIUM_LIB_DIR`/`KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`를 자동 설정한다. 코드사이닝은 아직 없음 — 로컬 배포 테스트용 ad-hoc 빌드다. |
+| Windows | 미착수 (`docs/01_KnowDesk_PRD.md` 상 실제 타겟 플랫폼) | `tauri.conf.json`의 `bundle.targets`가 아직 macOS용(`app`/`dmg`)만, `bundle.resources`도 `.dylib` 경로만 가리키고 있어 지금 상태로는 Windows용 인스톨러가 만들어지지 않는다. Windows 네이티브 바이너리 동봉·경로 계산·인스톨러(NSIS/MSI)·코드사이닝 모두 `docs/11_Implementation_Plan.md` Phase D1/D3 대상으로 남아 있다. |
+| Linux | 계획 없음 (PRD 타겟 아님) | 헤드리스 코어(`cli`) 검증까지만 대상이다. `tauri dev`는 Linux에서도 동작하지만(`docs/06_Development_Roadmap.md` Phase C 참고), `bundle.targets`에 `deb`/`appimage` 등이 등록돼 있지 않고 네이티브 리소스 경로도 macOS 전용이라 배포용 패키징은 지원 대상이 아니다. |

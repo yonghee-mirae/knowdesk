@@ -87,9 +87,18 @@ impl Tokenizer for KiwiTokenizer {
         // gets highlighted (e.g. only "지" out of "지었다" (built)). Gather all morphemes
         // belonging to the same word segment (word_position) and widen the span to the
         // segment's full start~end range.
+        //
+        // `word_position` is scoped per sentence (kiwi-rs: "Word index inside the
+        // analyzed sentence"), not per document, so it resets to 0 for every new
+        // sentence. On multi-sentence text, a token in an unrelated sentence can land on
+        // the same word_position as `matched` by coincidence; without also requiring
+        // `sent_position` to match, the fold below would merge them and widen the span
+        // across everything in between, highlighting most of the document.
         let (start, end) = tokens
             .iter()
-            .filter(|t| t.word_position == matched.word_position)
+            .filter(|t| {
+                t.word_position == matched.word_position && t.sent_position == matched.sent_position
+            })
             .fold(
                 (matched.position, matched.position + matched.length),
                 |(s, e), t| (s.min(t.position), e.max(t.position + t.length)),
@@ -182,6 +191,31 @@ mod tests {
         // so "지었다." (built.) ends up included — that's fine, the highlighted span
         // just extends slightly to include the punctuation, which doesn't cause display
         // issues.
+        assert_eq!(span, "지었다.", "found span: {span:?}");
+    }
+
+    #[test]
+    fn locates_irregular_verb_span_without_leaking_into_other_sentences() {
+        let Some(result) = KiwiTokenizer::from_env() else {
+            eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR not set, skipping");
+            return;
+        };
+        let tokenizer = result.expect("Kiwi initialization failed");
+
+        // `word_position` is scoped per sentence, so it resets to 0 for each new
+        // sentence and unrelated tokens across sentences can land on the same
+        // word_position by coincidence — as "성장" does here in every repeated
+        // sentence, at the same word_position as "짓" in the last one. Regression
+        // for a bug where `locate()` grouped tokens by word_position alone and
+        // widened the span across the entire distance between them, highlighting
+        // most of the document instead of just "지었다.".
+        let text = "대한민국의 2026년 경제성장률은 3.5%이다.\n".repeat(10) + "새로운 건물을 지었다.";
+        let (start, len) = tokenizer
+            .locate(&text, &["짓".to_string()])
+            .expect("must find the stem position");
+
+        let chars: Vec<char> = text.chars().collect();
+        let span: String = chars[start..start + len].iter().collect();
         assert_eq!(span, "지었다.", "found span: {span:?}");
     }
 }

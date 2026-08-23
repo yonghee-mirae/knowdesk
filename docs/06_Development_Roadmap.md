@@ -10,9 +10,11 @@ v1.1 개정 — M0~M15 선형 순서 대신, **동작하는 end-to-end 파이프
 
 DRM을 논외로 하면 최대 리스크는 PDF 한글 추출 품질이다. 본구현(B1)이 아니라 사전 검증 스파이크(1일 내외)로, 본격 구현 전에 CID 폰트·다단 레이아웃·표·스캔본(이미지 PDF) 샘플에서 `pdfium-render`로 한글이 정상 추출되는지 먼저 확인한다. 스캔본은 OCR이 Out of Scope이라 텍스트가 비어 있을 수 있음을 미리 확인해두는 것도 포함(`04_Data_Model.md`의 `EMPTY_TEXT` 강등 사유 참조).
 
-## S-2 Kiwi 메모리 실측 스파이크
+## S-2 Kiwi 메모리 실측 스파이크 (완료, 2026-08-23)
 
 유휴 메모리 200MB 목표(PRD 4장)의 실현 가능성이 미검증이다. 본구현이 아니라 `Kiwi::from_config`로 모델을 로드한 뒤 RSS를 실측하는 스파이크(1일 내외)로, 목표치를 확정하기 전에 Kiwi 모델 자체의 메모리 사용량부터 파악한다.
+
+⚠️ **실측 결과: 목표 미달성 확정.** `knowdesk-cli`를 빌드해 `/usr/bin/time -l`로 직접 측정 — Kiwi 로드 전 ~9.9MB, 로드 후 **~824MB RSS**(디스크상 모델 크기는 ~95MB에 불과, 8~9배 부풀어 오름). Apple Silicon(neon)에서 "Quantization is not supported for ArchType::neon. Fall back to non-quantized model." 경고와 함께 비양자화 모델로 폴백하는 게 원인으로 보인다. 게다가 `kiwi_rs::Kiwi`가 `!Send`라 `SearchWorker`와 색인/감시 워커가 각자 별도 인스턴스를 로드해 총 ~1.6GB까지 치솟는 문제도 함께 발견 — `KiwiActor`(전용 스레드 하나가 인스턴스를 소유하고 양쪽 워커가 채널로 요청만 보냄, `src-tauri/src/lib.rs`)로 공유해 인스턴스 하나로 줄였다. 그래도 여전히 200MB 목표를 훨씬 초과하므로, `enable_morphological_analysis` 설정(기본 off, `12_UI_Spec.md`)을 추가해 켜지 않으면 Kiwi를 아예 로드하지 않도록 했다 — PRD 4장 목표는 이 설정이 꺼진 기본 상태 기준으로 재해석한다.
 
 ## A1 Foundation
 
@@ -92,6 +94,7 @@ DRM을 논외로 하면 최대 리스크는 PDF 한글 추출 품질이다. 본�
 - ⚠️ 디바운스는 `notify-debouncer-mini`/`-full` 둘 다 안 쓰고 **직접 구현**했다 — 처음엔 `notify-debouncer-mini`로 구현했다가 **무한 재색인 루프**를 실제로 재현했다. Linux inotify 백엔드는 `OPEN`/`ATTRIB`(접근·메타데이터 변경)까지 기본으로 감시하는데, 색인 파이프라인이 파일을 읽는 것(해시 계산, 텍스트 추출) 자체가 `OPEN` 이벤트를 만들어 "읽음→이벤트 발생→재색인→다시 읽음"이 끝없이 돈다. `notify-debouncer-full`도 소스를 확인해봤는데 `EventKind::Access`/`Modify(Metadata)`를 걸러내지 않아 동일한 문제가 있다. 그래서 원시 `notify::Event`를 직접 받아 `EventKind`로 필터링(Create/Remove/Modify(Data\|Name)만 통과)한 뒤 직접 디바운스한다 (`core/src/index/watcher.rs`). 문서 식별이 경로가 아니라 내용 해시 기준이라 rename 전용 추적(`-full`이 제공하는 기능)도 필요 없다.
 - ⚠️ **경로 정규화 버그 발견·수정 (2026-08-21):** `watch` 사용 중 사용자가 실제로 겪은 버그 — 파일 내용을 수정해도 예전 내용이 검색에 영구히 남았다. 원인: 최초 전체 스캔(`run_index`)은 사용자가 준 경로 문자열(예: `./samples/x.txt`)을 그대로 쓰지만, `notify`가 그 뒤 변경을 알릴 땐 현재 작업 디렉터리를 붙인 경로(`/현재/디렉터리/./samples/x.txt`)로 이벤트를 준다. `paths` 테이블은 경로 문자열이 기본 키라서 같은 파일이 문서 두 개로 나뉘어 색인되고, 내용이 바뀌어도 예전 문서가 정리되지 않은 채 검색에 계속 노출됐다. `IndexPipeline::index_file`/`queue`에서 경로를 항상 `canonicalize`하도록 고쳤다(`core/src/index/mod.rs`의 `canonical_path`) — 삭제된 파일은 canonicalize가 안 되므로 부모 디렉터리만 canonicalize해서 재구성한다.
 - 문서 삭제 시 orphan 정리(`DocumentRepository::remove_path`) — 다른 경로가 그 문서를 더 안 참조하면 `documents`/`content_fts`/`document_bodies`까지 정리. 네트워크 드라이브 대량 오프라인과 실제 삭제를 구분하는 문제(D-1, 미결)는 범위 밖 — 지금은 경로 하나가 사라지면 그대로 삭제로 처리한다.
+- ⚠️ **정리 범위 확장 (2026-08-23):** 위 orphan 정리는 원래 "감시 중 파일 하나가 실제로 사라짐"만 다뤘는데, 실사용 중 그보다 넓은 케이스들이 안 잡히는 걸 발견해 전부 메웠다 — (1) 폴더째 삭제(파일 하나가 아니라 폴더 자체가 없어지면 그 파일의 부모까지 같이 사라져 `canonical_path`의 기존 1단계 복원이 실패하던 문제 — 조상을 계속 거슬러 올라가도록 일반화, `remove_paths_under`로 하위 전부 정리), (2) **앱이 꺼져 있는 동안** 파일/폴더가 삭제된 경우(라이브 `notify` 이벤트가 있을 수 없으므로, 앱 시작 시 감시 폴더마다 `prune_missing_paths_under`로 디스크 존재 여부를 재확인), (3) `watched_folders`에서 폴더를 뺀 경우 — 앱이 켜져 있든 꺼져 있든(`prune_paths_outside_watched`를 `apply_folder_diff` 호출마다 무조건 실행해 현재 설정 기준으로 전체 재정합), (4) 파일 **내용만** 바뀐 경우(`document_id`가 SHA256 해시라 내용이 바뀌면 새 문서로 취급되는데, 예전 `document_id`의 `documents`/`content_fts`/`document_bodies` 행이 고아로 영구히 남던 버그 — `upsert_path`가 재지정 직전의 이전 `document_id`를 기억해뒀다가 정리). 삭제로 비워진 공간이 `.db` 파일 크기에 실제로 반영되도록 `Db::reclaim_space()`(FTS5 `optimize` + `VACUUM` + WAL 체크포인트)도 추가 — `PRAGMA incremental_vacuum`은 이 환경에서 실측상 거의 동작하지 않아(N을 얼마로 줘도 호출당 페이지 1개 정도만 회수) 전체 `VACUUM`으로 전환했다.
 - 헤드리스 검증용 `cli watch <경로>` 서브커맨드 추가.
 - 색인 스로틀링 — 워커 수 제한 + 배치 간 sleep으로 초기 대량 색인이 유휴 CPU 목표(PRD 4장, 1% 미만)를 침해하지 않게 한다.
 

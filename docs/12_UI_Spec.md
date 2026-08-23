@@ -44,10 +44,13 @@ F-05(검색 이력)는 MVP 범위에서 제외됐으므로(`KnowDesk_추가검�
 
 > **macOS 표기 — 결정됨 (2026-08-22):** 위 목업은 Windows 기준(`Ctrl`)이다. 키 처리 자체는 `Ctrl`/`Cmd` 둘 다 받아들이지만(플랫폼 무관), macOS에서는 관례상 `Cmd`를 쓰므로 화면에 표시되는 힌트 텍스트만 실행 플랫폼에 맞춰 `⌘`로 바뀐다(하단 상태바, 모드 토글 버튼 툴팁). 구현: `frontend/src/core/platform.ts`의 `MOD_KEY`.
 
+> **형태소 분석 상태 아이콘 (추가, 2026-08-23):** 위 목업엔 없지만, 하단 상태바 오른쪽 끝에 `margin-left: auto`로 분리된 아이콘 한 칸이 추가됐다 — `enable_morphological_analysis` 설정이 켜져 있고 *또한* Kiwi 초기화까지 성공했을 때만 보인다(둘 다 아니면 완전히 숨김). Feather Icons의 "type"(Aa) 모양, 마우스오버 시 "형태소 분석 활성" 툴팁. 다른 설정값과 동일하게 로드 시+포커스 시 다시 확인(C5 설정 테이블의 `enable_morphological_analysis` 참조).
+
 ### 동작
 
 - 창이 열리면 입력창에 자동 포커스.
-- 입력하는 대로 검색(짧은 디바운스, 예: 150ms — 정확한 값은 구현 시 조정).
+- 입력하는 대로 검색(짧은 디바운스 — 기본값 `search_debounce_ms` 300ms, 아래 설정 테이블 참조. 초기엔 150ms였으나 검색 부하 재검토 후 상향).
+- ⚠️ **최소 검색어 길이 게이트 추가 (2026-08-23):** 실제 키워드(필터/연산자/따옴표 구문/접두 검색 제외한 일반 검색어)가 2자 미만이면 디바운스가 끝나도 백엔드에 검색을 아예 보내지 않는다 — 짧은 순간이라도 한 글자만 입력된 상태에서 디바운스 대기 시간이 끝나버리면 그대로 검색이 나가던 문제(`영문 관사 "a" 등 극히 저효율/광범위한 매치를 유발) 대응. 필터 전용 쿼리(`x:pdf` 등, 키워드 없음)는 예외로 그대로 통과(`frontend/src/main.ts`의 `hasSearchableTerm`, `core::search::parser`의 문법을 가볍게 미러링 — 실제 문법이 바뀌면 같이 갱신 필요).
 - 검색 모드: **내용**(기본) / **파일명** 두 가지(F-02). 상단 토글로 전환, 키보드로도 전환 가능(`Ctrl+1`/`Ctrl+2`, macOS `Cmd+1`/`Cmd+2` — 결정됨, 2026-08-22). `Ctrl+Tab`은 채택하지 않음(숫자 단축키만 사용).
 - `Ctrl+,`(macOS `Cmd+,`)로 "설정" 열기 — 트레이 메뉴의 "Settings"와 동일 동작(`settings.json`을 OS 기본 프로그램으로 염, 2026-08-24 추가). macOS/Windows 공통의 "환경설정 열기" 관례 단축키.
 - 검색 문법(`05_Search_Language_v1.md`)은 입력창에 직접 타이핑 — 별도 필터 위젯 없이 `x:pdf`, `p:리서치`, `m>2026-01-01` 등을 그대로 지원(필터 접두어는 한 글자 — 직접 타이핑해야 하므로 짧게, `tier:`/`drm:`은 제거됨, 2026-08-22). MVP에서는 문법 안내를 placeholder 텍스트나 `?` 툴팁 정도로만 제공(별도 도움말 창은 범위 밖).
@@ -63,6 +66,7 @@ F-05(검색 이력)는 MVP 범위에서 제외됐으므로(`KnowDesk_추가검�
 | `Ctrl+Enter` (macOS `Cmd+Enter`) | 선택 항목 폴더 열기 |
 | `Ctrl+C` (macOS `Cmd+C`) | 경로 복사 (결과 리스트에 포커스 있을 때만 — 입력창 포커스 중엔 텍스트 복사와 충돌하므로 제외) |
 | `Esc` | 창 닫기(트레이로 숨김, 프로세스 종료 아님) |
+| (마우스) 더블클릭 | 선택 항목 파일 열기 — `Enter`와 동일 동작 (완료, 2026-08-23. Ctrl+Enter의 "폴더 열기"에 대응하는 더블클릭 변형은 없음 — 수정키를 누른 채 더블클릭하는 관례적 제스처가 없어서 만들지 않음) |
 
 ---
 
@@ -87,7 +91,7 @@ C1 레이아웃의 우측 패널. 별도 화면이 아니라 결과 리스트 �
 - `Enter`: OS 기본 프로그램으로 파일 열기
 - `Ctrl+Enter`(macOS `Cmd+Enter`): 상위 폴더를 탐색기로 열기
 - `Ctrl+C`(macOS `Cmd+C`): 경로 클립보드 복사
-- 마우스 클릭(더블클릭 열기, 우클릭 컨텍스트 메뉴)도 지원하되 필수 경로는 아니다 — 키보드만으로 전부 가능해야 한다는 F-04 원칙 재확인.
+- 마우스 클릭도 지원하되 필수 경로는 아니다 — 키보드만으로 전부 가능해야 한다는 F-04 원칙 재확인. **더블클릭 열기는 구현 완료(2026-08-23, `Enter`와 동일 동작, 위 C1 키보드 표 참조)** — 우클릭 컨텍스트 메뉴는 아직 미구현(계획만 있던 상태).
 
 실패 시 안내 문구는 `KnowDesk_추가검토사항.md` E-4를 그대로 쓴다:
 
@@ -103,7 +107,9 @@ C1 레이아웃의 우측 패널. 별도 화면이 아니라 결과 리스트 �
 ## C4. 트레이 & 전역 단축키
 
 - 트레이 아이콘 좌클릭 또는 전역 단축키(`settings.json`의 `hotkey` 필드, 기본값 `CmdOrCtrl+Alt+K` - 2026-08-24부터 설정에서 실제로 변경 가능하고 저장 즉시 재등록됨, 아래 참조)로 검색창 **토글**(닫혀 있으면 표시, 열려 있으면 숨김) — 2026-08-22부터 좌클릭도 단축키와 동일하게 토글로 통일.
-- 트레이 우클릭 메뉴(2026-08-24 갱신, 영문 표기): **Settings** / **Statistics** / 구분선 / **Reset Index** / 구분선 / **Quit**. "검색창 열기"는 좌클릭이 이미 담당해서 메뉴에 없고, **"Reload"도 없다** — `settings.json`은 색인 대상 폴더와 똑같이 파일 감시 대상이라(`06_Development_Roadmap.md` TASK-706), 손으로 편집하거나 삭제해도 수동 조작 없이 자동으로 반영된다. Settings는 `settings.json` 파일 자체를 OS 기본 프로그램으로 여는 것뿐(Settings Window 대체, 위 참조 - 2026-08-24부터 폴더가 아니라 파일을 직접 염). Statistics/Reset Index는 아래 C5 참조.
+- 트레이 우클릭 메뉴(2026-08-24 갱신, 영문 표기): **Settings** / **Statistics** / 구분선 / **Reset Index** / 구분선 / **About** / **Quit**. "검색창 열기"는 좌클릭이 이미 담당해서 메뉴에 없고, **"Reload"도 없다** — `settings.json`은 색인 대상 폴더와 똑같이 파일 감시 대상이라(`06_Development_Roadmap.md` TASK-706), 손으로 편집하거나 삭제해도 수동 조작 없이 자동으로 반영된다. Settings는 `settings.json` 파일 자체를 OS 기본 프로그램으로 여는 것뿐(Settings Window 대체, 위 참조 - 2026-08-24부터 폴더가 아니라 파일을 직접 염). Statistics/Reset Index는 아래 C5 참조.
+
+  ⚠️ **About 항목 (2026-08-23):** 처음엔 OS 네이티브 About 패널(`PredefinedMenuItem::about`)로 만들었는데, 이 앱이 트레이 전용 백그라운드 앱(`ActivationPolicy::Accessory`)이라 활성화(activate)를 안 해두면 패널이 다른 앱 뒤에 숨어서 뜨는 문제가 있었다. 우클릭 시 메뉴가 뜨기 *전에* 활성화하도록 고쳤더니 이번엔 macOS가 활성화 도중 메뉴 트래킹 세션 자체를 취소해버려서, 우클릭 메뉴가 통째로 깜빡이고 사라지는 새 버그가 생겼다. 결국 About을 Settings/Statistics/Quit과 동일하게 "메뉴 선택 후" 콜백으로 바꿔서 — 이 시점엔 메뉴가 이미 닫힌 뒤라 활성화가 메뉴 트래킹과 충돌하지 않는다 — 해결. 내용도 네이티브 패널 대신 Statistics와 같은 방식의 Info 다이얼로그로 표시: "About KnowDesk / Version {버전} / Developed by Yonghee Yu".
 
   ⚠️ **수정 이력:**
   1. (2026-08-22) Reload를 처음엔 `AppHandle::restart()`(앱 전체 재시작)로 구현했다가, `npm run tauri dev`(개발 모드)에서 실제로 멈추는 문제가 있어 되돌렸다 — 개발 모드는 프론트엔드를 별도 vite 서버(`devUrl`)로 띄우는데, 앱 프로세스가 재시작으로 죽는 순간 `tauri dev`의 오케스트레이터가 dev 세션이 끝났다고 판단해 그 vite 서버와 터미널 세션까지 같이 정리해버린다. 대신 색인 워커 스레드에 컨트롤 채널(`IndexCommand::Reload`)을 둬서 `settings.json`을 다시 읽고 `watched_folders`만 그 스레드 안에서 적용하도록 바꿨다.
@@ -154,7 +160,8 @@ C1 레이아웃의 우측 패널. 별도 화면이 아니라 결과 리스트 �
 | 색인 수행 시간대·리소스 상한 | **비노출 유지** - 열린 질문 #6에서 이미 결정됨 (TASK-306, 상시 스로틀링만 구현 범위) |
 | 전역 단축키 변경 | **이번에 추가** - `hotkey` (`String`), 기존 하드코딩 상수(`DEFAULT_HOTKEY`, 이제 `core::config`로 이동)를 대체. `settings.json` 변경 감지 시 `run()`이 넘긴 콜백(`on_settings_reload`)이 이전 값을 `unregister`하고 새 값을 `register_hotkey`로 재등록 - 재시작 불필요. |
 | 검색 결과 표시 개수 | **이번에 추가** - `result_limit` (`u32`). 기존엔 `frontend/src/main.ts`의 `RESULT_LIMIT` 상수였음. `get_result_limit` 커맨드로 노출, `theme`과 동일하게 페이지 로드+포커스 시점에 다시 읽음. **`0`은 무제한을 뜻하고, 기본값도 무제한(2026-08-24 결정)** - `core::search::SearchRequest::limit`이 `0`(또는 음수)을 SQLite의 "음수 `LIMIT`은 무제한" 관례로 정규화(`SqliteSearchService::search`). |
-| (mockup엔 없었지만 같은 검토에서 발견) 검색 입력 debounce 시간 | **이번에 추가** - `search_debounce_ms` (`u32`, 기본 150). 기존엔 `frontend/src/main.ts`의 `DEBOUNCE_MS` 상수였음. `get_search_debounce_ms` 커맨드로 노출, 나머지 프론트엔드 설정값과 동일한 방식으로 다시 읽음. |
+| (mockup엔 없었지만 같은 검토에서 발견) 검색 입력 debounce 시간 | **이번에 추가** - `search_debounce_ms` (`u32`, 기본 300 - ⚠️ **2026-08-23 150→300으로 상향**, `frontend/src/main.ts`의 폴백 기본값도 함께 수정). 기존엔 `frontend/src/main.ts`의 `DEBOUNCE_MS` 상수였음. `get_search_debounce_ms` 커맨드로 노출, 나머지 프론트엔드 설정값과 동일한 방식으로 다시 읽음. |
+| (2026-08-23, Kiwi 메모리 실측 후 추가) 형태소 분석(Kiwi) 사용 여부 | **추가** - `enable_morphological_analysis` (`bool`, 기본 `false`). Kiwi 모델 로드 비용이 인스턴스당 ~824MB로 실측되어(`01_KnowDesk_PRD.md` 4장, `06_Development_Roadmap.md` S-2) 기본은 끄고, 켠 사용자만 그 비용을 감수하게 했다. 꺼져 있으면 검색/색인 어느 경로에서도 Kiwi를 아예 로드하지 않는다(`KiwiHandle::ensure_loaded()`가 호출 자체가 안 됨). 검색창 하단 상태바 오른쪽에 이 설정이 켜져 있고 *또한* Kiwi 초기화까지 성공했을 때만 아이콘으로 표시(`get_morph_analysis_active` 커맨드, 로드 시+포커스 시 재확인 - 다른 설정값과 동일한 패턴). |
 | (2026-08-24, 하드코딩 값 전체 재검토에서 발견) 색인 대상 폴더 파일 감시 debounce 시간 | **추가** - `file_watch_debounce_ms` (`u32`, 기본 3000). 기존엔 `src-tauri`에 고정값(`Duration::from_millis(3000)`)으로 박혀 있었음(`knowdesk-cli watch --debounce-ms`는 이미 플래그로 노출돼 있던 것과 대비됨). `core::index::watcher::FileWatcher::set_debounce`로 필드 값만 바꿔주면 되므로 워처 재생성 없이 즉시 적용됨. `settings.json` 파일 자체를 감시하는 별개의 워처(삭제 시 기본값 재생성용)의 debounce는 설정값으로 빼지 않고 내부 고정값 200ms 유지 - 사용자가 튜닝할 대상이 아니라는 판단(2026-08-24). |
 | 시작 시 자동 실행 | **이번 범위에서 제외** - 코드/의존성이 전혀 없는 새 기능(OS별 자동시작 연동, `tauri-plugin-autostart` 같은 새 의존성 필요)이라 사용자 확인 후 보류. ⚠️ **구현 (2026-08-23):** 사용자가 요청해 `tauri-plugin-autostart`를 추가하고 `auto_start` (`bool`, 기본 `false`) 필드로 반영 - `hotkey`와 동일한 방식으로 `settings.json` 변경 감지 시 실시간 등록/해제(`src-tauri`의 `sync_autostart`), 앱 시작 시에도 실제 OS 로그인 항목 상태를 값과 맞춰 재동기화. |
 | 색인 DB 저장 위치 | **제외 유지** - `db_path`는 2026-08-24 이전 턴에서 이미 "환경변수(`KNOWDESK_DB_PATH`)/기본값으로만 결정, `settings.json`에는 절대 넣지 않는다"고 확정됨(`core::config::Config`의 `#[serde(skip)]`, `save_never_writes_db_path` 테스트). 이번 mockup 재검토로도 이 결정은 바꾸지 않음 - 다시 필요해지면 별도로 논의. |

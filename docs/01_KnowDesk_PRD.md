@@ -382,7 +382,7 @@ Kiwi
 
 유휴 메모리
 
-- 200MB 이하 (S-2 실측 후 확정 — Kiwi 모델 + 웹뷰 상주 기준)
+- 200MB 이하 — ⚠️ **S-2 실측 완료 (2026-08-23): 목표 미달성 확정.** Kiwi 모델 로드 시 인스턴스당 ~824MB RSS 실측(Apple Silicon은 양자화 미지원이라 비양자화 모델로 폴백 — `06_Development_Roadmap.md` S-2/`07_Coding_Agent_Backlog.md` TASK-006 참조). 대응: `enable_morphological_analysis` 설정(`12_UI_Spec.md`) 추가, 기본값 off — 켜지 않으면 Kiwi를 아예 로드하지 않아 유휴 메모리는 목표치 내로 유지된다. 형태소 분석을 켠 사용자에 한해서만 이 비용을 감수한다.
 
 ---
 

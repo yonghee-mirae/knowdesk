@@ -38,10 +38,11 @@ Your Knowledge, On Your Desk.
 | `theme` | `"system"` | `"light"` / `"dark"` / `"system"`(OS 설정 따라감) |
 | `hotkey` | `"CmdOrCtrl+Alt+K"` | 검색창을 부르는 전역 단축키. |
 | `result_limit` | `0` | 검색 결과 표시 개수 상한. `0`은 무제한. |
-| `search_debounce_ms` | `150` | 입력을 멈춘 뒤 실제 검색이 실행되기까지 대기 시간(ms). |
+| `search_debounce_ms` | `300` | 입력을 멈춘 뒤 실제 검색이 실행되기까지 대기 시간(ms). 검색어가 2자 미만이면(필터·연산자·따옴표 구문 제외) 디바운스 후에도 아예 검색하지 않는다. |
 | `file_watch_debounce_ms` | `3000` | 감시 중인 폴더에 변경이 생긴 뒤 실제로 재색인하기까지 대기 시간(ms). 문서 저장 중 생기는 임시파일 폭주에 대응. |
 | `auto_start` | `false` | `true`로 바꾸면 OS 로그인 시 자동 실행. |
 | `max_file_size_mb` | `50` | 이보다 큰 파일은 색인에서 제외. |
+| `enable_morphological_analysis` | `false` | 형태소 분석기(Kiwi)를 켤지 여부. 인스턴스당 메모리를 상당히 더 쓰므로(환경에 따라 수백 MB) 기본은 꺼짐. 켜져 있고 초기화까지 끝나면 검색창 하단 상태바에 아이콘으로 표시된다. |
 
 지원하는 문서 형식: Word(`.docx`), Excel(`.xlsx`), PowerPoint(`.pptx`), PDF, 일반 텍스트(`.txt`), 마크다운(`.md`). 구버전 포맷(`.doc`/`.xls`/`.ppt`)은 지원하지 않는다.
 
@@ -61,7 +62,7 @@ Your Knowledge, On Your Desk.
 | 키 | 동작 |
 |---|---|
 | `↑` / `↓` | 결과 목록 이동 |
-| `Enter` | 선택한 파일 열기 |
+| `Enter` (결과 더블클릭도 동일) | 선택한 파일 열기 |
 | `Ctrl+Enter` (`⌘+Enter`) | 선택한 파일이 있는 폴더 열기 |
 | `Ctrl+C` (`⌘+C`) | 선택한 파일의 경로 복사 |
 | `Ctrl+1` / `Ctrl+2` (`⌘+1` / `⌘+2`) | 내용 검색 / 파일명 검색 모드 전환 |
@@ -75,7 +76,7 @@ Your Knowledge, On Your Desk.
 - **Settings** — `settings.json`을 기본 편집기로 열기
 - **Statistics** — 색인된 문서 수(본문 색인/메타 색인), 색인 DB 용량, 마지막 색인 시각을 보여줌
 - **Reset Index** — 색인을 전부 지우고 감시 중인 모든 폴더를 처음부터 다시 색인 (확인 대화상자 필요, 되돌릴 수 없음)
-- **About** — OS 기본 정보 창(앱 이름·버전·개발자 정보, OS별 표준 형식)
+- **About** — 버전·개발자 정보를 담은 안내 대화상자
 - **Quit** — 완전 종료
 
 ---

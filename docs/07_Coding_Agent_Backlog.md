@@ -10,7 +10,7 @@ v1.1 개정 — `06_Development_Roadmap.md`의 Phase A~D 순서에 맞춰 재배
 
 TASK-005 PDF 한글 추출 스파이크 — `pdfium-render`로 CID 폰트·다단·표·스캔본 샘플 검증 (1일 내외)
 
-TASK-006 Kiwi 메모리 실측 스파이크 — `from_config` 로드 후 RSS 측정 (1일 내외)
+TASK-006 Kiwi 메모리 실측 스파이크 — `from_config` 로드 후 RSS 측정 (1일 내외) — 완료 (2026-08-23). 인스턴스당 ~824MB RSS, 200MB 목표 미달성 확정. 상세 결과·대응은 `06_Development_Roadmap.md` S-2 참조
 
 ---
 
@@ -151,6 +151,7 @@ TASK-706 Index Worker (완료) — `src-tauri`에 배선된 색인/감시 백그
 ⚠️ **재설계 이력:**
 1. (2026-08-22) 트레이의 Reload가 앱 재시작(`AppHandle::restart()`) 방식이었을 때 `npm run tauri dev`에서 실제로 멈추는 문제가 발견되어(`12_UI_Spec.md` C4 참조), IndexWorker를 컨트롤 채널이 있는 상시 액터로 다시 만들었다(`SearchWorker`와 같은 모양) — `IndexCommand::Reload`를 받으면 스레드 안에서 `settings.json`을 다시 읽고 `apply_folder_diff`로 `watched_folders` 변경분만 적용.
 2. (2026-08-23) 그 컨트롤 채널·트레이의 "Reload" 항목을 전부 없앴다 — "파일 감시 기능이 이미 있으니 설정 파일에도 그대로 적용해라"는 지시에 따라, `run_index_worker`가 색인 대상 폴더용 `FileWatcher`와 별개로 `settings.json`이 있는 폴더도 감시하도록 바꿈. 수정 이벤트가 오면 `reload_settings`로 다시 읽어 `apply_folder_diff` 적용(추가된 폴더는 스캔+`FileWatcher::watch`, 빠진 폴더는 `FileWatcher::unwatch`), 삭제 이벤트가 오면(파일이 실제로 없어졌는지 확인 후) `Config::default()`로 재생성 — 수동 "Reload" 자체가 필요 없어짐. `KiwiTokenizer`는 여전히 폴더가 실제로 생기기 전까지 로드를 미룬다(메모리 낭비 방지, `06_Development_Roadmap.md` S-2).
+3. (2026-08-23) `KiwiTokenizer`는 폴더 수만큼 인스턴스가 늘어나는 건 막아뒀지만, **`SearchWorker`와 이 색인 워커가 서로 각자 인스턴스를 하나씩 로드하는 중복**은 그대로였다(둘 다 별도 스레드라 `!Send`인 `kiwi_rs::Kiwi`를 공유 못 함) — S-2 실측(인스턴스당 ~824MB)으로 총 ~1.6GB까지 치솟는 게 드러나 `KiwiActor`(전용 스레드 하나가 유일한 인스턴스를 소유, 양쪽 워커는 채널로 tokenize/locate 요청만 보냄)로 통합했다. 추가로 `enable_morphological_analysis` 설정(기본 off, `12_UI_Spec.md`)이 꺼져 있으면 이 액터조차 Kiwi를 로드하지 않는다.
 
 TASK-704 Settings Window → "설정 파일 폴더 열기"로 대체 (완료, 2026-08-22) — Settings Window를 실제로 만들었다가(폴더 추가/제거 UI, `tauri-plugin-dialog` 네이티브 다이얼로그) 사용자 지시로 걷어내고, 훨씬 단순한 방식으로 교체했다: 트레이 메뉴/검색바 톱니바퀴의 "설정"이 이제 `settings.json`이 들어있는 폴더를 OS 파일 관리자로 열어주기만 하고(`open_settings_folder`), 그 파일을 텍스트 에디터로 직접 편집하는 게 UI 전체다. `run()`이 시작 시 `settings.json`이 없으면 `Config::default().save(...)`로 기본값 파일을 만들어둔다(빈 파일 상태로 시작하지 않게). 폴더 추가/제거 IPC 커맨드, 네이티브 폴더 선택 다이얼로그, 새 "settings" 창은 전부 제거됨.
 

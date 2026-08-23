@@ -23,6 +23,8 @@ PDF 추출은 네이티브 **libpdfium** 동적 라이브러리가 있어야 실
 
 형태소 분석은 bigram이 항상 채우는 기본 토크나이저이고, Kiwi는 네이티브 라이브러리·모델이 있을 때만 추가로 붙는 보조 토크나이저다. 둘 중 하나라도 없으면 (오류 없이) Kiwi 없이 bigram만 쓴다. Kiwi까지 검증하려면 [bab2min/Kiwi](https://github.com/bab2min/Kiwi/releases) 릴리스에서 **`v0.22.2`** (⚠️ `v0.23.2`는 `kiwi-rs 2026.7.24`와 ABI가 맞지 않아 세그폴트한다 — `11_Implementation_Plan.md` 참조) 의 `kiwi_lnx_x86_64_v0.22.2.tgz`(라이브러리)와 `kiwi_model_v0.22.2_base.tgz`(모델)를 받아 압축을 풀고, `KNOWDESK_KIWI_LIB_PATH`(예: `lib/libkiwi.so`)와 `KNOWDESK_KIWI_MODEL_DIR`(예: `models/cong/base`) 환경 변수로 각각 지정한다.
 
+⚠️ **`knowdesk-cli`는 `enable_morphological_analysis` 설정을 모른다 (2026-08-23):** 그 설정은 `settings.json`을 읽는 Tauri 앱(`src-tauri`) 전용 on/off 스위치다 — 인스턴스당 메모리를 상당히 더 쓰는(환경에 따라 수백 MB) `Kiwi` 로드를 기본으로 막기 위해 추가됐다. `knowdesk-cli`는 이 설정 자체가 없고, 위 두 환경 변수가 지정돼 있으면 항상 Kiwi를 로드한다.
+
 > **주의:** `index`는 동일한 내용(SHA256)의 문서가 이미 DB에 있으면 재추출하지 않고 기존 계층을 그대로 쓴다. `KNOWDESK_PDFIUM_LIB_DIR`/`KNOWDESK_KIWI_LIB_PATH` 등 환경 변수를 바꿔서 다시 검증할 때는 `rm -f ./samples.db`로 DB를 지우고 다시 색인해야 한다 — 지우지 않으면 이전 강등 결과가 그대로 남아 있다.
 
 ```bash
@@ -79,13 +81,16 @@ Kiwi가 실제로 동작 중이면 둘 다 `공사보고서.txt`를 찾고, 둘 
 | `watch <경로> [--debounce-ms N]` | 폴더를 계속 감시하며 변경을 즉시 색인 (Ctrl+C로 종료, 기본 디바운스 3000ms) |
 | `bench` | 벤치마크 (Phase B5에서 구현 예정, 현재 스텁) |
 
-`watch`는 먼저 전체 스캔을 한 번 하고(감시가 꺼져 있던 동안의 변경 반영), 그 뒤로는 생성·수정·삭제만 반영한다. 파일 삭제 시 그 문서를 참조하는 다른 경로가 더 없으면 색인에서도 완전히 지운다(orphan 정리). 예:
+`watch`는 먼저 전체 스캔을 한 번 하고(감시가 꺼져 있던 동안의 변경 반영), 그 뒤로는 생성·수정·삭제만 반영한다. 파일 삭제 시 그 문서를 참조하는 다른 경로가 더 없으면 색인에서도 완전히 지운다(orphan 정리) — 파일 하나가 사라진 경우뿐 아니라 폴더째 삭제된 경우도 동일하게 정리된다(`core/src/index/queue.rs`, `03_Architecture.md` Index Queue 참조). 예:
 
 ```bash
 cargo run -p knowdesk-cli -- --db ./watch.db watch ./samples &
 echo "새 문서" > ./samples/새문서.txt   # 잠시 후 자동 색인됨
 rm ./samples/새문서.txt                # 잠시 후 색인에서도 사라짐
+rm -rf ./samples/하위폴더               # 폴더째 삭제해도 동일하게 정리됨
 ```
+
+⚠️ **`.db` 파일 크기는 삭제해도 자동으로 줄지 않는다:** 위처럼 문서를 지워도 SQLite가 빈 공간을 곧바로 회수하지 않으므로 `.db` 파일 크기는 그대로 유지된다. 실제로 줄이려면 `sqlite3 ./watch.db "INSERT INTO content_fts(content_fts) VALUES('optimize'); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);"`를 직접 실행한다 — Tauri 앱(`src-tauri`)에서는 이 과정을 `Db::reclaim_space()`가 정리 시점마다 자동으로 해 주지만, `knowdesk-cli`에는 이 기능이 없다.
 
 검색 필터는 `docs/05_Search_Language_v1.md` 문법을 그대로 따른다: `x:pdf`, `p:리서치`, `m>2026-01-01`, `m<2026-08-01`, `m=2026-08-10` 등을 검색어에 함께 넣으면 된다.
 
@@ -123,7 +128,7 @@ npm --prefix frontend install
 KNOWDESK_DB_PATH="$(pwd)/samples.db" npm run tauri dev
 ```
 
-키보드: `↑`/`↓` 이동, `Enter` 열기, `Ctrl+Enter` 폴더 열기, `Ctrl+C` 경로 복사, `Ctrl+1`/`Ctrl+2` 내용·파일명 모드 전환, `Esc` 창 숨김, `Ctrl+,` 설정 파일 열기. macOS에서는 `Ctrl` 대신 `Cmd`도 동일하게 동작하며, 화면에 표시되는 힌트도 실행 플랫폼에 맞춰 `⌘`로 바뀐다(`frontend/src/core/platform.ts`). 전체 목록은 `README.md`의 "단축키" 참조.
+키보드: `↑`/`↓` 이동, `Enter` 열기(결과 더블클릭도 동일), `Ctrl+Enter` 폴더 열기, `Ctrl+C` 경로 복사, `Ctrl+1`/`Ctrl+2` 내용·파일명 모드 전환, `Esc` 창 숨김, `Ctrl+,` 설정 파일 열기. macOS에서는 `Ctrl` 대신 `Cmd`도 동일하게 동작하며, 화면에 표시되는 힌트도 실행 플랫폼에 맞춰 `⌘`로 바뀐다(`frontend/src/core/platform.ts`). 전체 목록은 `README.md`의 "단축키" 참조.
 
 프로토타입에서 확정된 요소 중 실제 UI에 반영된 것: 검색 문법 도움말 패널(검색어가 비어 있을 때 결과 리스트 자리에 전체 폭으로 표시), 다크모드 토글 버튼, 결과 항목의 경로(meta-line) 표시, "결과 없음" 2단 안내 문구, 창을 둥근 모서리로 띄우는 플로팅 카드 룩(투명 창 + CSS `box-shadow` — macOS 네이티브 창 그림자는 웹뷰 투명도와 무관하게 창 프레임 전체를 사각형으로 그리므로 꺼두고 대체했다, `frontend/src/styles/layout.css` 참조).
 

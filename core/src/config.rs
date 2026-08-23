@@ -28,7 +28,7 @@ pub const DEFAULT_HOTKEY: &str = "CmdOrCtrl+Alt+K";
 pub const DEFAULT_RESULT_LIMIT: u32 = 0;
 /// Delay after the last keystroke before a search actually fires
 /// (`frontend/src/main.ts`'s `scheduleSearch`).
-pub const DEFAULT_SEARCH_DEBOUNCE_MS: u32 = 150;
+pub const DEFAULT_SEARCH_DEBOUNCE_MS: u32 = 300;
 /// Quiet period after the last file-system event before a change to a watched
 /// folder is treated as settled and actually indexed
 /// (`core::index::watcher::FileWatcher`'s `debounce`). Same value
@@ -90,6 +90,18 @@ pub struct Config {
     /// (`KnowDesk_추가검토사항.md` E-1, 2026-08-24: "새 의존성이 필요한 별도
     /// 기능이라 이번 범위에서 제외") - added once the user actually asked for it.
     pub auto_start: bool,
+    /// Whether the Kiwi morphological analyzer is used at all
+    /// (`core::nlp::kiwi`, `KiwiActor`/`KiwiHandle` in `src-tauri`). Off by
+    /// default - the bundled model costs ~824MB RSS once loaded (measured on
+    /// Apple Silicon, where kiwi-rs falls back to an unquantized in-memory
+    /// representation), well past the PRD's 200MB idle-memory target, so
+    /// paying that cost is opt-in rather than automatic whenever the native
+    /// library/model happen to be present. Bigram tokenization (always on)
+    /// is unaffected either way. Applied live, same as `auto_start`/`hotkey` -
+    /// changing this and saving takes effect on the next search or indexed
+    /// file, no restart needed; turning it on doesn't load Kiwi immediately,
+    /// only the first time something actually needs it afterward.
+    pub enable_morphological_analysis: bool,
 }
 
 impl Default for Config {
@@ -104,6 +116,7 @@ impl Default for Config {
             search_debounce_ms: DEFAULT_SEARCH_DEBOUNCE_MS,
             file_watch_debounce_ms: DEFAULT_FILE_WATCH_DEBOUNCE_MS,
             auto_start: false,
+            enable_morphological_analysis: false,
         }
     }
 }
@@ -272,6 +285,23 @@ mod tests {
 
         let reloaded = Config::load(Some(&path)).unwrap();
         assert!(reloaded.auto_start);
+    }
+
+    #[test]
+    fn enable_morphological_analysis_defaults_to_false_and_roundtrips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+
+        assert!(!Config::default().enable_morphological_analysis);
+
+        let config = Config {
+            enable_morphological_analysis: true,
+            ..Config::default()
+        };
+        config.save(&path).unwrap();
+
+        let reloaded = Config::load(Some(&path)).unwrap();
+        assert!(reloaded.enable_morphological_analysis);
     }
 
     #[test]

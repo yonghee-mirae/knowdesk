@@ -15,10 +15,12 @@ import type { SearchHit, SearchMode } from './types';
 void loadAndApplyTheme();
 void loadResultLimit();
 void loadSearchDebounceMs();
+void refreshMorphAnalysisStatus();
 void refreshIndexProgress();
 // Re-checks on every focus (shown via the tray/hotkey) - see
 // `loadAndApplyTheme`'s doc comment for why that's needed instead of a
-// push-based update. Same reasoning applies to `resultLimit`/`searchDebounceMs`.
+// push-based update. Same reasoning applies to
+// `resultLimit`/`searchDebounceMs`/`morphAnalysisStatus`.
 // `refreshIndexProgress` also keeps re-polling on its own interval while a
 // scan is actually in progress (started/stopped inside itself) - unlike a
 // settings value, this can change every moment the window is sitting open,
@@ -27,6 +29,7 @@ window.addEventListener('focus', () => {
   void loadAndApplyTheme();
   void loadResultLimit();
   void loadSearchDebounceMs();
+  void refreshMorphAnalysisStatus();
   void refreshIndexProgress();
 });
 
@@ -41,7 +44,7 @@ document.querySelectorAll('.kd-footer kbd').forEach((el) => {
 // defaults (`core::config::DEFAULT_RESULT_LIMIT`/`DEFAULT_SEARCH_DEBOUNCE_MS`).
 // `0` means unlimited, same convention as the backend field.
 let resultLimit = 0;
-let debounceMs = 150;
+let debounceMs = 300;
 
 /** Reads `result_limit` from `settings.json` (via the backend). Best-effort -
  * an unreadable/corrupt settings.json shouldn't block search, just keeps
@@ -70,13 +73,15 @@ const maybeResultList = document.querySelector<KdResultList>('kd-result-list');
 const maybeSyntaxHelp = document.querySelector<KdSyntaxHelp>('kd-syntax-help');
 const maybePreview = document.querySelector<KdPreview>('kd-preview');
 const maybeIndexProgress = document.querySelector<HTMLDivElement>('#index-progress');
+const maybeMorphStatus = document.querySelector<HTMLSpanElement>('#morph-status');
 if (
   !maybeBody ||
   !maybeSearchBar ||
   !maybeResultList ||
   !maybeSyntaxHelp ||
   !maybePreview ||
-  !maybeIndexProgress
+  !maybeIndexProgress ||
+  !maybeMorphStatus
 ) {
   throw new Error('KnowDesk: required elements missing from index.html');
 }
@@ -86,6 +91,20 @@ const resultList = maybeResultList;
 const syntaxHelp = maybeSyntaxHelp;
 const preview = maybePreview;
 const indexProgressEl = maybeIndexProgress;
+const morphStatusEl = maybeMorphStatus;
+
+/** Shows/hides the footer's "형태소 분석 활성" icon (`enable_morphological_analysis`
+ * on *and* Kiwi itself loaded successfully) - read on load + window focus, same
+ * "settings value, not pushed" pattern as `loadResultLimit`/`loadSearchDebounceMs`. */
+async function refreshMorphAnalysisStatus(): Promise<void> {
+  let active = false;
+  try {
+    active = await backend.getMorphAnalysisActive();
+  } catch {
+    // Best-effort - an IPC hiccup shouldn't spam the UI with an error.
+  }
+  morphStatusEl.hidden = !active;
+}
 
 let indexProgressTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -160,6 +179,72 @@ function showPreview(hit: SearchHit): void {
   }
 }
 
+/** Minimum length a plain bareword keyword needs before a search is worth
+ * running for it at all - a single character (typed right before the next
+ * one, whenever the debounce quiet window happens to land there) matches far
+ * too broadly to be useful (e.g. the English article "a", or a Korean
+ * enumeration marker like "가") while still costing a full FTS5 scan across
+ * every indexed document. */
+const MIN_KEYWORD_LENGTH = 2;
+
+/** Mirrors just enough of `core::search::parser`'s grammar (filter prefixes
+ * `x:`/`p:`/`m>`/`m<`/`m=`, AND/OR/NOT, quoted phrases, grouping parens, the
+ * trailing `*` prefix-search suffix) to tell whether `query` has at least one
+ * plain keyword worth actually searching for yet - not a full
+ * reimplementation of the grammar (that stays server-side, `search::parser`),
+ * so keep this in sync if that grammar changes. A phrase/wildcard/grouping
+ * token always counts as "worth it" regardless of length - it's syntax the
+ * user typed deliberately, not a keyword still being typed. A filter-only
+ * query (no plain keyword at all, e.g. "x:pdf") is also let through
+ * unchanged - it never runs an FTS5 match to begin with
+ * (`SearchRepository::search_content_filters_only`), so there's nothing to
+ * gate. */
+function hasSearchableTerm(query: string): boolean {
+  let sawKeywordCandidate = false;
+  for (const token of tokenizeForLengthCheck(query)) {
+    if (isFilterToken(token) || isOperatorToken(token)) continue;
+    sawKeywordCandidate = true;
+    const isPhrase = token.startsWith('"');
+    const isWildcard = token.endsWith('*') && token.length > 1;
+    const isGrouping = token.includes('(') || token.includes(')');
+    if (isPhrase || isWildcard || isGrouping || token.length >= MIN_KEYWORD_LENGTH) {
+      return true;
+    }
+  }
+  return !sawKeywordCandidate;
+}
+
+function isFilterToken(token: string): boolean {
+  return ['x:', 'p:', 'm>', 'm<', 'm='].some((prefix) => token.startsWith(prefix));
+}
+
+function isOperatorToken(token: string): boolean {
+  return token === 'AND' || token === 'OR' || token === 'NOT';
+}
+
+/** Splits on whitespace, keeping a `"..."` phrase as a single token - same
+ * behavior as `core::search::parser::tokenize`. */
+function tokenizeForLengthCheck(input: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (const ch of input) {
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      current += ch;
+    } else if (/\s/.test(ch) && !inQuotes) {
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
+    } else {
+      current += ch;
+    }
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
 // Guards against out-of-order replies when a fast typist outruns the debounce
 // (e.g. two keystrokes each trigger a search, and the first one's IPC round
 // trip resolves after the second one's) - only the most recently issued
@@ -169,7 +254,7 @@ let searchSeq = 0;
 async function runSearch(): Promise<void> {
   const seq = ++searchSeq;
   const query = searchBar.value.trim();
-  if (!query) {
+  if (!query || !hasSearchableTerm(query)) {
     state.hits = [];
     showSyntaxHelp();
     return;
@@ -271,6 +356,14 @@ function selectIndex(index: number): void {
 searchBar.addEventListener('kd-query-input', () => scheduleSearch());
 searchBar.addEventListener('kd-mode-change', (e) => setMode((e as CustomEvent<SearchMode>).detail));
 resultList.addEventListener('kd-row-click', (e) => selectIndex((e as CustomEvent<number>).detail));
+// Same "open it" action as pressing Enter on the selected row (below) - no
+// Ctrl/Cmd modifier variant for "open parent folder" here, since a
+// double-click has no equivalent held-modifier gesture to key off of.
+resultList.addEventListener('kd-row-dblclick', (e) => {
+  const hit = state.hits[(e as CustomEvent<number>).detail];
+  if (!hit) return;
+  void backend.openPath(hit.path);
+});
 
 window.addEventListener('keydown', (e) => {
   const withMod = e.ctrlKey || e.metaKey;

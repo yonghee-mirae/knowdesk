@@ -96,6 +96,68 @@ fn same_file_via_different_path_strings_is_treated_as_one_document() {
 }
 
 #[test]
+fn reindexing_an_edited_file_cleans_up_the_previous_content_hash() {
+    // `document_id` is a content hash (`core::scan::hash`), so editing an
+    // already-indexed file's content between app runs (no live `notify`
+    // event to see it as a change - the app wasn't watching, or wasn't even
+    // running) makes the next scan of that path compute a brand new
+    // `document_id` and re-extract it as if it were a different document
+    // entirely. Confirms the *previous* hash's `documents`/`content_fts`/
+    // `document_bodies` rows don't survive as permanent orphans -
+    // `DocumentRepository::upsert_path`'s job, not exercised by
+    // `same_file_via_different_path_strings_is_treated_as_one_document`
+    // above (which only asserts on search results, not raw row counts).
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("보고서.txt");
+    std::fs::write(&file_path, "GDP 성장률은 3.2%였다.").unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let bigram = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &bigram,
+        kiwi: None,
+    };
+    pipeline.index_file(&file_path).unwrap();
+
+    let document_count = || -> i64 {
+        db.conn
+            .query_row("SELECT COUNT(*) FROM documents", [], |row| row.get(0))
+            .unwrap()
+    };
+    assert_eq!(document_count(), 1, "one document after the first index");
+
+    // Edited "while the app wasn't running" - just a plain file write, no
+    // watcher/notify event involved - then the same path is scanned again,
+    // exactly like `apply_folder_diff`'s startup scan re-walking an
+    // already-watched folder.
+    std::fs::write(&file_path, "GDP 성장률은 5.2%였다.").unwrap();
+    pipeline.index_file(&file_path).unwrap();
+
+    assert_eq!(
+        document_count(),
+        1,
+        "the old content-hash document must be cleaned up, not left as a permanent orphan"
+    );
+    let content_fts_count: i64 = db
+        .conn
+        .query_row("SELECT COUNT(*) FROM content_fts", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(content_fts_count, 1);
+    let document_bodies_count: i64 = db
+        .conn
+        .query_row("SELECT COUNT(*) FROM document_bodies", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(document_bodies_count, 1);
+}
+
+#[test]
 fn watch_indexes_new_file_and_removes_deleted_file() {
     let dir = tempfile::tempdir().unwrap();
     let db = Db::open_in_memory().unwrap();
@@ -164,6 +226,97 @@ fn watch_indexes_new_file_and_removes_deleted_file() {
     assert!(
         result.hits.is_empty(),
         "still found by search after deletion: {:?}",
+        result.hits
+    );
+}
+
+#[test]
+fn watch_removes_every_document_when_a_whole_subfolder_is_deleted() {
+    // Reported bug: deleting an entire indexed folder (not just one file
+    // inside it) left its documents stuck in the DB. Root cause was
+    // `canonical_path` only walking up one ancestor level to reconstruct a
+    // deleted path's canonical form, plus `remove_path` only ever matching
+    // one exact `paths.path` value - neither handles a file whose *parent*
+    // is also gone, which is exactly what happens when the containing
+    // folder is deleted as a whole rather than emptied file-by-file.
+    let dir = tempfile::tempdir().unwrap();
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let bigram = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &bigram,
+        kiwi: None,
+    };
+
+    let watcher = FileWatcher::new(&[dir.path()], DEBOUNCE).unwrap();
+
+    let sub_dir = dir.path().join("sub");
+    std::fs::create_dir(&sub_dir).unwrap();
+    std::fs::write(sub_dir.join("규정.txt"), "채권 발행 절차").unwrap();
+    std::fs::write(sub_dir.join("결의.txt"), "이사회 결의").unwrap();
+
+    let events = watcher
+        .recv_timeout(WAIT)
+        .expect("did not receive creation events");
+    let outcomes = queue::drain(&pipeline, events);
+    // The batch may also include a `Create` event for `sub` itself (ignored,
+    // directories aren't indexing targets - `handle_path`'s `is_dir()` check)
+    // alongside the two files' - not asserted on directly since whether that
+    // shows up at all is OS/timing-dependent, unlike the two files' outcomes.
+    let indexed = outcomes
+        .iter()
+        .filter(|(_, outcome)| matches!(outcome, Ok(WatchOutcome::Indexed(_))))
+        .count();
+    assert_eq!(indexed, 2, "events: {:?}", outcomes);
+
+    let path_count: i64 = db
+        .conn
+        .query_row("SELECT COUNT(*) FROM paths", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(path_count, 2, "both files should be indexed before deletion");
+
+    // Delete the whole subfolder at once, not file-by-file - both files' own
+    // parent directory is gone too, not just the files themselves.
+    std::fs::remove_dir_all(&sub_dir).unwrap();
+
+    // A generous number of drain passes: depending on how the OS coalesces
+    // the bulk deletion into `notify` events (per-file vs. one event for the
+    // folder itself), it may take more than one debounced batch to fully
+    // settle.
+    for _ in 0..10 {
+        let Some(events) = watcher.recv_timeout(WAIT) else {
+            break;
+        };
+        queue::drain(&pipeline, events);
+    }
+
+    let path_count: i64 = db
+        .conn
+        .query_row("SELECT COUNT(*) FROM paths", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        path_count, 0,
+        "documents from a wholly-deleted folder must not stay stuck in the DB"
+    );
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: None,
+    };
+    let result = search
+        .search(&SearchRequest {
+            query: "채권".to_string(),
+            mode: SearchMode::Content,
+            limit: 10,
+        })
+        .unwrap();
+    assert!(
+        result.hits.is_empty(),
+        "still found by search after the whole folder was deleted: {:?}",
         result.hits
     );
 }

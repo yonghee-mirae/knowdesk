@@ -88,7 +88,23 @@ impl DocumentRepository {
         .map(|opt| opt.and_then(|s| IndexTier::parse(&s)))
     }
 
+    /// If `path.path` was already indexed, repointing it at different content (`document_id`
+    /// changed - e.g. the file was edited while the app wasn't running to see it as a live
+    /// change, then re-scanned on the next start) can orphan the *previous* document_id this
+    /// path used to reference. That old document is cleaned up the same way `remove_path`
+    /// does for a path that disappears outright - otherwise its `documents`/`content_fts`/
+    /// `document_bodies` rows would stay stranded forever (nothing else references them, and
+    /// nothing else would ever notice - the same `document_id` never gets re-extracted once
+    /// it already has a `documents` row, see `pipeline::index_file`).
     pub fn upsert_path(conn: &Connection, path: &PathRecord) -> rusqlite::Result<()> {
+        let previous_document_id: Option<String> = conn
+            .query_row(
+                "SELECT document_id FROM paths WHERE path = ?1",
+                params![path.path],
+                |row| row.get(0),
+            )
+            .optional()?;
+
         conn.execute(
             "INSERT INTO paths (path, document_id, filename, extension, modified_at, seen_at)
              VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))
@@ -106,6 +122,12 @@ impl DocumentRepository {
                 path.modified_at,
             ],
         )?;
+
+        if let Some(previous_document_id) = previous_document_id {
+            if previous_document_id != path.document_id {
+                Self::cleanup_if_orphaned(conn, &previous_document_id)?;
+            }
+        }
         Ok(())
     }
 
@@ -130,14 +152,21 @@ impl DocumentRepository {
         };
 
         conn.execute("DELETE FROM paths WHERE path = ?1", params![path])?;
+        Self::cleanup_if_orphaned(conn, &document_id)?;
+        Ok(Some(document_id))
+    }
 
+    /// Shared by `remove_path` and `upsert_path`: if no `paths` row references `document_id`
+    /// any more, cascades the cleanup to `content_fts`/`document_bodies`/`documents`. A no-op
+    /// if another path still points at the same content (e.g. a duplicated file).
+    fn cleanup_if_orphaned(conn: &Connection, document_id: &str) -> rusqlite::Result<()> {
         let remaining: i64 = conn.query_row(
             "SELECT COUNT(*) FROM paths WHERE document_id = ?1",
             params![document_id],
             |row| row.get(0),
         )?;
         if remaining == 0 {
-            SearchRepository::remove_content(conn, &document_id)?;
+            SearchRepository::remove_content(conn, document_id)?;
             conn.execute(
                 "DELETE FROM document_bodies WHERE document_id = ?1",
                 params![document_id],
@@ -147,7 +176,104 @@ impl DocumentRepository {
                 params![document_id],
             )?;
         }
-        Ok(Some(document_id))
+        Ok(())
+    }
+
+    /// Called when `dir_path` disappears and turns out to have been a directory (a whole
+    /// watched folder, or a folder nested inside one, deleted at once) rather than a single
+    /// file - `remove_path` alone only matches one exact `paths.path` value, so it can't
+    /// clean up anything that was indexed underneath a deleted directory. Removes every path
+    /// nested under `dir_path` (matched via `Path::starts_with`, not a raw string prefix, so
+    /// e.g. `/a/b` doesn't also match a sibling like `/a/bc`), cascading exactly like
+    /// `remove_path` for each one. A no-op if nothing in `paths` is nested under `dir_path` -
+    /// the common case where the deleted path really was just a single file, already handled
+    /// by the caller's own `remove_path` call (`queue::handle_path`).
+    pub fn remove_paths_under(conn: &Connection, dir_path: &str) -> rusqlite::Result<Vec<DocId>> {
+        let dir_path = std::path::Path::new(dir_path);
+        let mut stmt = conn.prepare("SELECT path FROM paths")?;
+        let nested: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|p| std::path::Path::new(p).starts_with(dir_path))
+            .collect();
+
+        let mut removed = Vec::new();
+        for path in nested {
+            if let Some(document_id) = Self::remove_path(conn, &path)? {
+                removed.push(document_id);
+            }
+        }
+        Ok(removed)
+    }
+
+    /// Purges every already-indexed path that isn't nested under any of `watched_dirs`
+    /// (already-canonicalized, same representation stored in `paths` - see
+    /// `index::canonical_path`). Unlike `remove_paths_under`/`prune_missing_paths_under`,
+    /// this doesn't target one specific folder - it reconciles the *whole* DB against the
+    /// current `config.watched_folders` in one pass, which is what makes it correct even
+    /// when a folder was removed from `settings.json` while the app wasn't running at all:
+    /// `src-tauri`'s `apply_folder_diff` only tracks folder additions/removals relative to
+    /// its own in-memory `current` list, which starts empty on every fresh process - so a
+    /// folder removed during that downtime is neither "added" nor "removed" from that
+    /// diff's point of view (it was never in `current` to begin with), and would otherwise
+    /// never be noticed. Calling this unconditionally, independent of that diff, covers
+    /// both the live-removal case and this startup-while-closed one with a single
+    /// mechanism. A no-op if every indexed path is still under some watched folder.
+    pub fn prune_paths_outside_watched(
+        conn: &Connection,
+        watched_dirs: &[std::path::PathBuf],
+    ) -> rusqlite::Result<Vec<DocId>> {
+        let mut stmt = conn.prepare("SELECT path FROM paths")?;
+        let outside: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|p| {
+                let p = std::path::Path::new(p);
+                !watched_dirs.iter().any(|dir| p.starts_with(dir))
+            })
+            .collect();
+
+        let mut removed = Vec::new();
+        for path in outside {
+            if let Some(document_id) = Self::remove_path(conn, &path)? {
+                removed.push(document_id);
+            }
+        }
+        Ok(removed)
+    }
+
+    /// Reconciles already-indexed paths nested under `dir_path` against the filesystem,
+    /// removing (`remove_path`) any that no longer exist. Complements the initial/startup
+    /// scan (`walker::scan` + `IndexPipeline::index_directory`) - that scan only ever
+    /// adds/updates whatever files it currently finds, so it has no way to notice a
+    /// previously-indexed file that's gone now: a deleted file simply isn't in its results
+    /// at all, rather than showing up as something to remove. This matters because a
+    /// deletion that happens while the app isn't running produces no live `notify` event for
+    /// `queue::handle_path`/`remove_paths_under` to catch - the very next startup scan of that
+    /// folder is the only chance to notice it (`src-tauri`'s `apply_folder_diff` calls this
+    /// for every scanned folder, not just ones with a `notify` event pending).
+    pub fn prune_missing_paths_under(conn: &Connection, dir_path: &str) -> rusqlite::Result<Vec<DocId>> {
+        let dir_path = std::path::Path::new(dir_path);
+        let mut stmt = conn.prepare("SELECT path FROM paths")?;
+        let missing: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|p| {
+                let p = std::path::Path::new(p);
+                p.starts_with(dir_path) && !p.exists()
+            })
+            .collect();
+
+        let mut removed = Vec::new();
+        for path in missing {
+            if let Some(document_id) = Self::remove_path(conn, &path)? {
+                removed.push(document_id);
+            }
+        }
+        Ok(removed)
     }
 
     /// Index summary: list of (tier, count). Backs the summary text format in
@@ -227,6 +353,123 @@ mod tests {
     use crate::db::Db;
 
     #[test]
+    fn upsert_path_cleans_up_the_previous_document_when_repointed_to_new_content() {
+        // Simulates a file edited while the app wasn't running, then
+        // re-scanned on the next start (`pipeline::index_file` computes a
+        // new content-hash `document_id` and calls `upsert_path` to repoint
+        // the same path string at it - see that function's doc comment).
+        let db = Db::open_in_memory().unwrap();
+        for id in ["old_content", "new_content"] {
+            DocumentRepository::upsert_document(
+                &db.conn,
+                &DocumentRecord {
+                    document_id: id.to_string(),
+                    file_size: 10,
+                    text_bytes: 5,
+                    index_tier: IndexTier::Full,
+                },
+            )
+            .unwrap();
+            SqliteDocumentStore { conn: &db.conn }
+                .put_body(id, "body")
+                .unwrap();
+            SearchRepository::index_content(&db.conn, id, "body", "body", "").unwrap();
+        }
+
+        DocumentRepository::upsert_path(
+            &db.conn,
+            &PathRecord {
+                path: "/a/report.txt".to_string(),
+                document_id: "old_content".to_string(),
+                filename: "report.txt".to_string(),
+                extension: "txt".to_string(),
+                modified_at: None,
+            },
+        )
+        .unwrap();
+
+        // Re-scanned: same path, but the file's content (and so its
+        // document_id) changed underneath it.
+        DocumentRepository::upsert_path(
+            &db.conn,
+            &PathRecord {
+                path: "/a/report.txt".to_string(),
+                document_id: "new_content".to_string(),
+                filename: "report.txt".to_string(),
+                extension: "txt".to_string(),
+                modified_at: None,
+            },
+        )
+        .unwrap();
+
+        assert!(
+            !DocumentRepository::exists(&db.conn, "old_content").unwrap(),
+            "the previous document_id must be cleaned up once no path references it any more"
+        );
+        assert!(DocumentRepository::exists(&db.conn, "new_content").unwrap());
+        let orphan_body: Option<String> = db
+            .conn
+            .query_row(
+                "SELECT body FROM document_bodies WHERE document_id = 'old_content'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap();
+        assert_eq!(orphan_body, None, "document_bodies must also be cleaned up");
+    }
+
+    #[test]
+    fn upsert_path_leaves_a_document_alone_while_another_path_still_references_it() {
+        // A duplicated file (same content at two paths) - repointing one of
+        // them elsewhere must not delete the shared document while the
+        // other path still references it.
+        let db = Db::open_in_memory().unwrap();
+        for id in ["shared", "new_content"] {
+            DocumentRepository::upsert_document(
+                &db.conn,
+                &DocumentRecord {
+                    document_id: id.to_string(),
+                    file_size: 10,
+                    text_bytes: 5,
+                    index_tier: IndexTier::Full,
+                },
+            )
+            .unwrap();
+        }
+        for path in ["/a/one.txt", "/a/copy.txt"] {
+            DocumentRepository::upsert_path(
+                &db.conn,
+                &PathRecord {
+                    path: path.to_string(),
+                    document_id: "shared".to_string(),
+                    filename: path.rsplit('/').next().unwrap().to_string(),
+                    extension: "txt".to_string(),
+                    modified_at: None,
+                },
+            )
+            .unwrap();
+        }
+
+        DocumentRepository::upsert_path(
+            &db.conn,
+            &PathRecord {
+                path: "/a/one.txt".to_string(),
+                document_id: "new_content".to_string(),
+                filename: "one.txt".to_string(),
+                extension: "txt".to_string(),
+                modified_at: None,
+            },
+        )
+        .unwrap();
+
+        assert!(
+            DocumentRepository::exists(&db.conn, "shared").unwrap(),
+            "/a/copy.txt still references it - must not be deleted"
+        );
+    }
+
+    #[test]
     fn reset_all_clears_documents_and_paths() {
         let db = Db::open_in_memory().unwrap();
         DocumentRepository::upsert_document(
@@ -257,6 +500,175 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(!DocumentRepository::exists(&db.conn, "abc").unwrap());
+    }
+
+    #[test]
+    fn remove_paths_under_purges_nested_paths_but_not_a_same_prefixed_sibling() {
+        let db = Db::open_in_memory().unwrap();
+        for (id, path) in [
+            ("doc_a", "/root/folder/a.txt"),
+            ("doc_b", "/root/folder/sub/b.txt"),
+            // Same string prefix as "/root/folder" but a different sibling
+            // directory - must survive (`Path::starts_with` compares whole
+            // components, not raw string prefixes).
+            ("doc_c", "/root/folder2/c.txt"),
+        ] {
+            DocumentRepository::upsert_document(
+                &db.conn,
+                &DocumentRecord {
+                    document_id: id.to_string(),
+                    file_size: 10,
+                    text_bytes: 5,
+                    index_tier: IndexTier::Full,
+                },
+            )
+            .unwrap();
+            DocumentRepository::upsert_path(
+                &db.conn,
+                &PathRecord {
+                    path: path.to_string(),
+                    document_id: id.to_string(),
+                    filename: path.rsplit('/').next().unwrap().to_string(),
+                    extension: "txt".to_string(),
+                    modified_at: None,
+                },
+            )
+            .unwrap();
+        }
+
+        let removed = DocumentRepository::remove_paths_under(&db.conn, "/root/folder").unwrap();
+        assert_eq!(removed.len(), 2, "removed: {:?}", removed);
+        assert!(!DocumentRepository::exists(&db.conn, "doc_a").unwrap());
+        assert!(!DocumentRepository::exists(&db.conn, "doc_b").unwrap());
+        assert!(
+            DocumentRepository::exists(&db.conn, "doc_c").unwrap(),
+            "a sibling folder sharing a string prefix must not be affected"
+        );
+    }
+
+    #[test]
+    fn prune_paths_outside_watched_removes_everything_not_under_the_given_dirs() {
+        let db = Db::open_in_memory().unwrap();
+        for (id, path) in [
+            ("doc_kept", "/watched/a.txt"),
+            ("doc_kept_nested", "/watched/sub/b.txt"),
+            ("doc_dropped", "/no_longer_watched/c.txt"),
+        ] {
+            DocumentRepository::upsert_document(
+                &db.conn,
+                &DocumentRecord {
+                    document_id: id.to_string(),
+                    file_size: 10,
+                    text_bytes: 5,
+                    index_tier: IndexTier::Full,
+                },
+            )
+            .unwrap();
+            DocumentRepository::upsert_path(
+                &db.conn,
+                &PathRecord {
+                    path: path.to_string(),
+                    document_id: id.to_string(),
+                    filename: path.rsplit('/').next().unwrap().to_string(),
+                    extension: "txt".to_string(),
+                    modified_at: None,
+                },
+            )
+            .unwrap();
+        }
+
+        let removed = DocumentRepository::prune_paths_outside_watched(
+            &db.conn,
+            &[std::path::PathBuf::from("/watched")],
+        )
+        .unwrap();
+        assert_eq!(removed, vec!["doc_dropped".to_string()]);
+        assert!(DocumentRepository::exists(&db.conn, "doc_kept").unwrap());
+        assert!(DocumentRepository::exists(&db.conn, "doc_kept_nested").unwrap());
+        assert!(!DocumentRepository::exists(&db.conn, "doc_dropped").unwrap());
+    }
+
+    #[test]
+    fn prune_paths_outside_watched_with_no_watched_dirs_removes_everything() {
+        // `watched_folders` cleared entirely - nothing is watched any more,
+        // so every indexed path is "outside" and gets purged.
+        let db = Db::open_in_memory().unwrap();
+        DocumentRepository::upsert_document(
+            &db.conn,
+            &DocumentRecord {
+                document_id: "doc".to_string(),
+                file_size: 10,
+                text_bytes: 5,
+                index_tier: IndexTier::Full,
+            },
+        )
+        .unwrap();
+        DocumentRepository::upsert_path(
+            &db.conn,
+            &PathRecord {
+                path: "/a/b.txt".to_string(),
+                document_id: "doc".to_string(),
+                filename: "b.txt".to_string(),
+                extension: "txt".to_string(),
+                modified_at: None,
+            },
+        )
+        .unwrap();
+
+        let removed = DocumentRepository::prune_paths_outside_watched(&db.conn, &[]).unwrap();
+        assert_eq!(removed, vec!["doc".to_string()]);
+    }
+
+    #[test]
+    fn prune_missing_paths_under_removes_only_paths_actually_gone_from_disk() {
+        // Real files on disk (not just DB rows) - `prune_missing_paths_under`
+        // checks `Path::exists()`, unlike `remove_paths_under` above which
+        // removes everything nested under a directory unconditionally.
+        let dir = tempfile::tempdir().unwrap();
+        let still_here = dir.path().join("still_here.txt");
+        let gone = dir.path().join("gone.txt");
+        std::fs::write(&still_here, "content").unwrap();
+        std::fs::write(&gone, "content").unwrap();
+
+        let db = Db::open_in_memory().unwrap();
+        for (id, path) in [("doc_here", &still_here), ("doc_gone", &gone)] {
+            DocumentRepository::upsert_document(
+                &db.conn,
+                &DocumentRecord {
+                    document_id: id.to_string(),
+                    file_size: 10,
+                    text_bytes: 5,
+                    index_tier: IndexTier::Full,
+                },
+            )
+            .unwrap();
+            DocumentRepository::upsert_path(
+                &db.conn,
+                &PathRecord {
+                    path: path.to_string_lossy().to_string(),
+                    document_id: id.to_string(),
+                    filename: path.file_name().unwrap().to_string_lossy().to_string(),
+                    extension: "txt".to_string(),
+                    modified_at: None,
+                },
+            )
+            .unwrap();
+        }
+
+        // Only deleted from disk after being indexed - same "app wasn't
+        // running to see it live" scenario `apply_folder_diff`'s startup
+        // scan is meant to catch.
+        std::fs::remove_file(&gone).unwrap();
+
+        let removed =
+            DocumentRepository::prune_missing_paths_under(&db.conn, &dir.path().to_string_lossy())
+                .unwrap();
+        assert_eq!(removed, vec!["doc_gone".to_string()]);
+        assert!(
+            DocumentRepository::exists(&db.conn, "doc_here").unwrap(),
+            "a path still present on disk must not be pruned"
+        );
+        assert!(!DocumentRepository::exists(&db.conn, "doc_gone").unwrap());
     }
 
     #[test]

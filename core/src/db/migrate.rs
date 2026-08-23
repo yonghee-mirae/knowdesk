@@ -28,6 +28,13 @@ const MIGRATIONS: &[(i64, &str)] = &[
          ALTER TABLE documents DROP COLUMN last_attempt_at;
          ALTER TABLE documents DROP COLUMN content_stored;",
     ),
+    // A deleted file/folder (or one taken out of `watched_folders`) frees rows, but
+    // SQLite never shrinks the database file on `DELETE` alone - the freed pages just
+    // sit in the file's internal freelist for reuse, not returned to the OS. One-time
+    // cleanup for whatever bloat already accumulated before `Db::reclaim_space` existed
+    // to keep it from growing further - a cost paid once, by whichever connection
+    // happens to open the DB first after upgrading.
+    (4, "VACUUM;"),
 ];
 
 pub fn run(conn: &Connection) -> rusqlite::Result<()> {
@@ -75,7 +82,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
     }
 
     #[test]

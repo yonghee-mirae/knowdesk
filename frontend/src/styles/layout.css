@@ -91,6 +91,28 @@ body {
   white-space: nowrap;
 }
 
+/* "형태소 분석 활성" indicator - the only right-aligned item in the footer
+   (`margin-left: auto` pushes it to the end of the flex row, no separate
+   wrapper needed since it's the last child). Monochrome line icon, same
+   convention as the preview pane's index-tier icons (`matchInfo.ts`) -
+   `currentColor` lets it recolor with the footer's own `color` for
+   light/dark automatically. */
+.kd-footer-right {
+  margin-left: auto;
+}
+
+/* `.kd-footer span`'s `display: inline-flex` above outranks the browser's
+   default `[hidden] { display: none }` (higher specificity - class+type vs.
+   a bare attribute selector), so setting `.hidden = true` on this element
+   from JS silently did nothing without this override. */
+.kd-footer-right[hidden] {
+  display: none;
+}
+
+.kd-footer-right svg {
+  display: block;
+}
+
 .kd-footer kbd {
   font-family: var(--font-mono);
   font-size: 10px;

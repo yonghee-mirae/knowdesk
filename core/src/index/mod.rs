@@ -27,15 +27,28 @@ pub trait IndexService {
 /// the same file to be indexed as two separate documents, and a bug where old content
 /// stays in search forever even after the content is edited (actually observed in
 /// practice). If the file exists, canonicalize it directly; if not (a deleted file),
-/// reconstruct it by canonicalizing only the parent directory.
+/// reconstruct it by canonicalizing the nearest ancestor that still exists and
+/// re-appending everything below it - walking up more than one level matters when a
+/// whole folder was deleted at once rather than just one file inside it, so the
+/// file's immediate parent is gone too (see `queue::handle_path` and
+/// `db::documents::DocumentRepository::remove_paths_under`, its counterpart for
+/// purging every indexed path that was nested under a deleted directory).
 pub fn canonical_path(path: &Path) -> PathBuf {
     if let Ok(canonical) = path.canonicalize() {
         return canonical;
     }
-    if let (Some(parent), Some(file_name)) = (path.parent(), path.file_name()) {
+    let mut trailing = Vec::new();
+    let mut ancestor = path;
+    while let Some(parent) = ancestor.parent() {
+        // `ancestor` always has a parent here, so it always has a file_name too.
+        trailing.push(ancestor.file_name().expect("has a parent"));
         if let Ok(canonical_parent) = parent.canonicalize() {
-            return canonical_parent.join(file_name);
+            return trailing
+                .into_iter()
+                .rev()
+                .fold(canonical_parent, |acc, name| acc.join(name));
         }
+        ancestor = parent;
     }
     path.to_path_buf()
 }

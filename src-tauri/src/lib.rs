@@ -4,12 +4,14 @@
 
 use knowdesk_core::config::{Config, Theme};
 use knowdesk_core::db::documents::DocumentRepository;
+use knowdesk_core::db::search_repo::SearchRepository;
 use knowdesk_core::db::Db;
 use knowdesk_core::extract::ooxml::{DocxExtractor, PptxExtractor};
 use knowdesk_core::extract::pdf::PdfExtractor;
 use knowdesk_core::extract::txt::TxtExtractor;
 use knowdesk_core::extract::xlsx::XlsxExtractor;
 use knowdesk_core::extract::ContentExtractor;
+use knowdesk_core::index::canonical_path;
 use knowdesk_core::index::pipeline::IndexPipeline;
 use knowdesk_core::index::queue;
 use knowdesk_core::index::watcher::FileWatcher;
@@ -58,8 +60,17 @@ impl SearchWorker {
         let (sender, receiver) = mpsc::channel::<SearchJob>();
         thread::spawn(move || {
             let db = Db::open(&db_path).expect("failed to open index DB");
-            let kiwi_available = kiwi.ensure_loaded();
             for job in receiver {
+                // Read fresh per search, same "no cache, just re-read
+                // settings.json" pattern as `get_theme`/`get_result_limit` -
+                // so flipping `enable_morphological_analysis` off/on and
+                // saving takes effect on the very next search, no restart.
+                // `&&` short-circuits `ensure_loaded()` (Kiwi's load attempt)
+                // away entirely while it's off.
+                let kiwi_available = Config::load(Some(&settings_path()))
+                    .map(|c| c.enable_morphological_analysis)
+                    .unwrap_or(false)
+                    && kiwi.ensure_loaded();
                 let service = SqliteSearchService {
                     conn: &db.conn,
                     kiwi: if kiwi_available {
@@ -436,6 +447,22 @@ fn get_search_debounce_ms() -> Result<u32, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Whether Kiwi's morphological analysis is actually usable right now -
+/// `enable_morphological_analysis` (`settings.json`) is on *and* Kiwi itself
+/// initialized successfully (`KiwiHandle::ensure_loaded`, triggering the
+/// one-time load attempt if it hasn't happened yet). Same "read on load +
+/// window focus" pattern as `get_theme` above - like a settings value, this
+/// doesn't change while the window just sits open. `&&` short-circuits
+/// `ensure_loaded()` away entirely while the setting is off, same as every
+/// other call site that checks this (`apply_folder_diff`, `SearchWorker`).
+#[tauri::command]
+fn get_morph_analysis_active(kiwi: tauri::State<KiwiHandle>) -> bool {
+    Config::load(Some(&settings_path()))
+        .map(|config| config.enable_morphological_analysis)
+        .unwrap_or(false)
+        && kiwi.ensure_loaded()
+}
+
 /// A hit's `snippet` is `null` when there's no keyword to build one around -
 /// a filter-only query (e.g. `x:pdf`), or filename mode (never has one at
 /// all). The frontend calls this on demand, only for the hit currently shown
@@ -567,11 +594,15 @@ fn compute_stats(db_path: &Path) -> Result<String, String> {
     let count_of = |tier: &str| tiers.iter().find(|(t, _)| t == tier).map_or(0, |(_, c)| *c);
     let full = count_of("FULL");
     let meta = count_of("META");
+    // Of the FULL-tier documents, how many actually got Kiwi's morphological
+    // analysis vs. bigram-only (Kiwi unavailable, or `enable_morphological_analysis`
+    // off - `core::config::Config`, `src-tauri`'s `KiwiActor`).
+    let kiwi_analyzed = SearchRepository::count_kiwi_analyzed(&db.conn).map_err(|e| e.to_string())?;
     let last_indexed = DocumentRepository::last_indexed_at(&db.conn).map_err(|e| e.to_string())?;
     let size = std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0);
 
     Ok(format!(
-        "Total: {} documents\n  Full text indexed: {full}\n  Metadata only: {meta}\nDatabase size: {}\nLast indexed: {}",
+        "Total: {} documents\n  Full text indexed: {full}\n    (Morphologically analyzed: {kiwi_analyzed})\n  Metadata only: {meta}\nDatabase size: {}\nLast indexed: {}",
         full + meta,
         format_bytes(size),
         last_indexed.as_deref().unwrap_or("never"),
@@ -754,6 +785,11 @@ fn run_index_worker(
             eprintln!("Resetting index (Reset Index requested from tray)");
             match DocumentRepository::reset_all(&db.conn) {
                 Ok(()) => {
+                    // The biggest single deletion this app ever does - always
+                    // worth reclaiming (`Db::reclaim_space`'s doc comment).
+                    if let Err(e) = db.reclaim_space() {
+                        eprintln!("Failed to reclaim disk space: {e}");
+                    }
                     for folder in &watched {
                         if let Err(e) = folder_watcher.unwatch(folder) {
                             eprintln!("Failed to unwatch {}: {e}", folder.display());
@@ -790,11 +826,13 @@ fn run_index_worker(
                 .filter(|path| watched.iter().any(|folder| path.starts_with(folder)))
                 .collect();
             if !events.is_empty() {
-                // Every folder reaching this point is already watched, which
-                // only happens once `apply_folder_diff` has triggered Kiwi's
-                // load attempt for it - `ensure_loaded()` here is just a
-                // cheap idempotent check of that outcome, not a fresh attempt.
-                let kiwi_available = kiwi.ensure_loaded();
+                // `config` is the live, settings-reloaded value, so flipping
+                // `enable_morphological_analysis` off/on and saving takes
+                // effect on the very next file change - same as
+                // `apply_folder_diff`. `&&` short-circuits `ensure_loaded()`
+                // (Kiwi's load attempt) away entirely while it's off.
+                let kiwi_available =
+                    config.enable_morphological_analysis && kiwi.ensure_loaded();
                 let pipeline = IndexPipeline {
                     conn: &db.conn,
                     config: &config,
@@ -806,9 +844,17 @@ fn run_index_worker(
                         None
                     },
                 };
+                let mut removed_anything = false;
                 for (path, result) in queue::drain(&pipeline, events) {
-                    if let Err(e) = result {
-                        eprintln!("{}: index error: {e}", path.display());
+                    match result {
+                        Ok(queue::WatchOutcome::Removed) => removed_anything = true,
+                        Err(e) => eprintln!("{}: index error: {e}", path.display()),
+                        Ok(_) => {}
+                    }
+                }
+                if removed_anything {
+                    if let Err(e) = db.reclaim_space() {
+                        eprintln!("Failed to reclaim disk space: {e}");
                     }
                 }
             }
@@ -830,14 +876,45 @@ type IndexProgressState = Arc<Mutex<Option<IndexProgress>>>;
 
 /// Diffs `config.watched_folders` against `current` (updated in place to
 /// match): newly listed folders get an initial scan and become watched;
-/// removed ones stop being watched. Already-indexed documents from a removed
-/// folder are left alone - not a purge (that's "색인 초기화", not built).
+/// removed ones stop being watched.
+///
+/// Every already-indexed path outside all of `config.watched_folders` is
+/// purged (`DocumentRepository::prune_paths_outside_watched`), unconditionally
+/// on every call rather than only for folders this call's `added`/`removed`
+/// diff notices. That diff is relative to this process's own in-memory
+/// `current`, which starts empty on every fresh process (`run_index_worker`),
+/// so a folder removed from `settings.json` while the app wasn't running at
+/// all was never in `current` to begin with, and is neither "added" nor
+/// "removed" from the diff's point of view; it would otherwise never be
+/// noticed. Reconciling against the whole current `watched_folders` list
+/// directly, instead of relying on that diff, catches both this
+/// removed-while-closed case and an ordinary live removal with one
+/// mechanism. No "does it still exist on disk" check here - the folder is
+/// gone from *configuration*, regardless of whether it's still physically
+/// present (contrast `prune_missing_paths_under` below).
+///
+/// Every scanned folder (not just a genuinely new one - see below) is also
+/// reconciled against the filesystem via `DocumentRepository::
+/// prune_missing_paths_under`, removing any already-indexed path that's
+/// gone now. This is what catches files/folders deleted while the app
+/// wasn't running at all: `current` always starts empty for a fresh process
+/// (`run_index_worker`), so every folder in `watched_folders` is "added"
+/// again on every app start, not just the first time it's configured -
+/// without this, a deletion that happened during that downtime would never
+/// surface (no live `notify` event to catch it, and the scan itself only
+/// adds/updates files it currently finds, never removes ones it doesn't).
+///
+/// Calls `db.reclaim_space()` once at the end if any of the above actually
+/// deleted rows - SQLite doesn't shrink its file on `DELETE` alone (see that
+/// method's doc comment), so without this the DB file would stay at its
+/// largest-ever size even after a folder full of documents is removed.
 ///
 /// Triggers `kiwi`'s (shared, actor-owned) load attempt the first time any
-/// folder is ever added, so an app with nothing configured yet doesn't pay
-/// Kiwi's memory cost for nothing (`KiwiActor`'s doc comment has the full
-/// reasoning on why this is a handle to a shared instance rather than one
-/// owned locally).
+/// folder is ever added *and* `config.enable_morphological_analysis` is on,
+/// so an app with nothing configured yet - or with the setting left at its
+/// default (off) - doesn't pay Kiwi's memory cost for nothing (`KiwiActor`'s
+/// doc comment has the full reasoning on why this is a handle to a shared
+/// instance rather than one owned locally).
 ///
 /// While scanning newly-added folders, keeps `progress` updated with a
 /// running total across all of them together (not reset per folder) - matters
@@ -861,11 +938,40 @@ fn apply_folder_diff(
     let desired = &config.watched_folders;
     let added: Vec<&PathBuf> = desired.iter().filter(|f| !current.contains(f)).collect();
     let removed: Vec<&PathBuf> = current.iter().filter(|f| !desired.contains(f)).collect();
+
+    // Tracks whether this call actually deleted any rows, so `db.reclaim_space()`
+    // (see its own doc comment - SQLite doesn't shrink its file on `DELETE` alone)
+    // only runs when there's something to reclaim, not on every settings-reload/
+    // startup tick regardless.
+    let mut removed_anything = false;
+
+    // Unconditional, ahead of the added/removed-diff early return below - see
+    // this function's doc comment for why relying on that diff alone misses
+    // a folder removed while the app wasn't running at all.
+    let canonical_desired: Vec<PathBuf> = desired.iter().map(|f| canonical_path(f)).collect();
+    match DocumentRepository::prune_paths_outside_watched(&db.conn, &canonical_desired) {
+        Ok(pruned) if !pruned.is_empty() => {
+            eprintln!(
+                "Removed {} document(s) no longer under any watched folder",
+                pruned.len()
+            );
+            removed_anything = true;
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("Failed to prune documents outside watched folders: {e}"),
+    }
+
     if added.is_empty() && removed.is_empty() {
+        if removed_anything {
+            if let Err(e) = db.reclaim_space() {
+                eprintln!("Failed to reclaim disk space: {e}");
+            }
+        }
         return;
     }
 
-    let kiwi_available = !added.is_empty() && kiwi.ensure_loaded();
+    let kiwi_available =
+        !added.is_empty() && config.enable_morphological_analysis && kiwi.ensure_loaded();
 
     let pipeline = IndexPipeline {
         conn: &db.conn,
@@ -910,14 +1016,46 @@ fn apply_folder_diff(
                 continue;
             }
         }
+        // Catches deletions that happened while the app wasn't running (no
+        // live `notify` event for `queue::handle_path` to react to) - the
+        // scan above only ever adds/updates files it currently finds, so a
+        // file gone since the last run wouldn't otherwise be noticed until
+        // it's edited/replaced. Every watched folder goes through here on
+        // every app start (`current` always starts empty for a fresh
+        // process, so nothing is ever *not* "added"), not just first-time
+        // folder adds.
+        match DocumentRepository::prune_missing_paths_under(
+            &db.conn,
+            &canonical_path(folder).to_string_lossy(),
+        ) {
+            Ok(pruned) if !pruned.is_empty() => {
+                eprintln!(
+                    "Removed {} document(s) under {} no longer on disk",
+                    pruned.len(),
+                    folder.display()
+                );
+                removed_anything = true;
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("Failed to prune missing paths under {}: {e}", folder.display()),
+        }
         if let Err(e) = watcher.watch(folder) {
             eprintln!("Failed to watch {}: {e}", folder.display());
         }
     }
     *progress.lock().unwrap() = None; // Idle again - the whole batch is done.
     for folder in removed {
+        // The DB purge for a no-longer-watched folder already happened above
+        // (`prune_paths_outside_watched`, unconditionally) - this is just
+        // live `notify` cleanup.
         if let Err(e) = watcher.unwatch(folder) {
             eprintln!("Failed to unwatch {}: {e}", folder.display());
+        }
+    }
+
+    if removed_anything {
+        if let Err(e) = db.reclaim_space() {
+            eprintln!("Failed to reclaim disk space: {e}");
         }
     }
 
@@ -989,6 +1127,7 @@ pub fn run() {
         ))
         .manage(worker)
         .manage(index_progress.clone())
+        .manage(kiwi.clone())
         .invoke_handler(tauri::generate_handler![
             search,
             open_path,
@@ -997,6 +1136,7 @@ pub fn run() {
             get_theme,
             get_result_limit,
             get_search_debounce_ms,
+            get_morph_analysis_active,
             preview_body,
             get_index_progress,
         ])
@@ -1478,6 +1618,37 @@ mod tests {
     }
 
     #[test]
+    fn compute_stats_reports_kiwi_analyzed_count_among_full_text_indexed() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        {
+            let db = Db::open(&db_path).unwrap();
+            for id in ["kiwi1", "bigram_only"] {
+                DocumentRepository::upsert_document(
+                    &db.conn,
+                    &DocumentRecord {
+                        document_id: id.to_string(),
+                        file_size: 10,
+                        text_bytes: 5,
+                        index_tier: IndexTier::Full,
+                    },
+                )
+                .unwrap();
+            }
+            SearchRepository::index_content(&db.conn, "kiwi1", "본문", "본문", "본문").unwrap();
+            // Kiwi unavailable/off - `morph_kiwi` left empty, same as
+            // `extract_and_index`'s `unwrap_or_default()`.
+            SearchRepository::index_content(&db.conn, "bigram_only", "본문", "본문", "").unwrap();
+        }
+
+        let stats = compute_stats(&db_path).unwrap();
+        assert!(
+            stats.contains("Full text indexed: 2\n    (Morphologically analyzed: 1)"),
+            "{stats}"
+        );
+    }
+
+    #[test]
     fn compute_stats_on_empty_db_reports_zero_and_never_indexed() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
@@ -1536,5 +1707,288 @@ mod tests {
             .find(|(tier, _)| tier == "FULL")
             .map_or(0, |(_, count)| *count);
         assert_eq!(full, 3, "all 3 files across both folders should be indexed");
+    }
+
+    /// Reported bug: deleting an indexed file (or a whole folder) while the
+    /// app isn't running at all left it stuck in the DB after the next
+    /// launch - there's no live `notify` event to catch a deletion that
+    /// happens during that downtime, and the initial scan alone only ever
+    /// adds/updates files it currently finds, never removing ones it
+    /// doesn't. Simulates a restart by calling `apply_folder_diff` a second
+    /// time with a fresh, empty `current` (exactly what `run_index_worker`
+    /// starts with on every process start) - the watched folder becomes
+    /// "added" again just like on a real relaunch.
+    #[test]
+    fn apply_folder_diff_prunes_files_deleted_while_the_app_was_not_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let kept = dir.path().join("kept.txt");
+        let deleted = dir.path().join("deleted.txt");
+        std::fs::write(&kept, "채권 발행").unwrap();
+        std::fs::write(&deleted, "이사회 결의").unwrap();
+
+        let db = Db::open_in_memory().unwrap();
+        let extractors = default_extractors();
+        let bigram = BigramTokenizer;
+        let kiwi = KiwiActor::spawn();
+        let config = Config {
+            watched_folders: vec![dir.path().to_path_buf()],
+            ..Config::default()
+        };
+        let progress: IndexProgressState = Arc::new(Mutex::new(None));
+
+        // First "run": both files get indexed.
+        let mut watcher = FileWatcher::new::<PathBuf>(&[], Duration::from_millis(3000)).unwrap();
+        let mut watched: Vec<PathBuf> = Vec::new();
+        apply_folder_diff(
+            &db,
+            &extractors,
+            &bigram,
+            &kiwi,
+            &mut watcher,
+            &mut watched,
+            &config,
+            &progress,
+        );
+        let tiers = DocumentRepository::count_by_tier(&db.conn).unwrap();
+        let full = tiers.iter().find(|(t, _)| t == "FULL").map_or(0, |(_, c)| *c);
+        assert_eq!(full, 2, "both files should be indexed before the app 'restarts'");
+
+        // The app is closed (no watcher running) and the user deletes one file.
+        std::fs::remove_file(&deleted).unwrap();
+
+        // Second "run": fresh `current`, like `run_index_worker` starts with
+        // on every process start - the same folder is "added" all over again.
+        let mut watcher = FileWatcher::new::<PathBuf>(&[], Duration::from_millis(3000)).unwrap();
+        let mut watched: Vec<PathBuf> = Vec::new();
+        apply_folder_diff(
+            &db,
+            &extractors,
+            &bigram,
+            &kiwi,
+            &mut watcher,
+            &mut watched,
+            &config,
+            &progress,
+        );
+
+        let tiers = DocumentRepository::count_by_tier(&db.conn).unwrap();
+        let full = tiers.iter().find(|(t, _)| t == "FULL").map_or(0, |(_, c)| *c);
+        assert_eq!(
+            full, 1,
+            "the file deleted while the app wasn't running must be pruned on the next scan"
+        );
+
+        let path_count: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM paths", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(path_count, 1);
+    }
+
+    /// Removing a folder from `watched_folders` (hand-editing `settings.json`)
+    /// must purge everything indexed from it, not just stop watching it -
+    /// the file itself is left untouched on disk throughout, to pin that
+    /// this is driven purely by the folder dropping out of *configuration*,
+    /// not by anything happening on the filesystem.
+    #[test]
+    fn apply_folder_diff_purges_documents_when_a_folder_is_removed_from_config() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("규정.txt"), "채권 발행 절차").unwrap();
+
+        let db = Db::open_in_memory().unwrap();
+        let extractors = default_extractors();
+        let bigram = BigramTokenizer;
+        let kiwi = KiwiActor::spawn();
+        let progress: IndexProgressState = Arc::new(Mutex::new(None));
+
+        let mut watcher = FileWatcher::new::<PathBuf>(&[], Duration::from_millis(3000)).unwrap();
+        let mut watched: Vec<PathBuf> = Vec::new();
+        let watching_config = Config {
+            watched_folders: vec![dir.path().to_path_buf()],
+            ..Config::default()
+        };
+        apply_folder_diff(
+            &db,
+            &extractors,
+            &bigram,
+            &kiwi,
+            &mut watcher,
+            &mut watched,
+            &watching_config,
+            &progress,
+        );
+        let tiers = DocumentRepository::count_by_tier(&db.conn).unwrap();
+        let full = tiers.iter().find(|(t, _)| t == "FULL").map_or(0, |(_, c)| *c);
+        assert_eq!(full, 1, "must be indexed before the folder is removed");
+
+        // The folder is dropped from `watched_folders` - the file on disk is
+        // never touched.
+        let unwatched_config = Config {
+            watched_folders: vec![],
+            ..Config::default()
+        };
+        apply_folder_diff(
+            &db,
+            &extractors,
+            &bigram,
+            &kiwi,
+            &mut watcher,
+            &mut watched,
+            &unwatched_config,
+            &progress,
+        );
+
+        assert!(
+            DocumentRepository::count_by_tier(&db.conn).unwrap().is_empty(),
+            "documents from a folder removed from watched_folders must be purged"
+        );
+        let path_count: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM paths", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(path_count, 0);
+        assert!(
+            dir.path().join("규정.txt").exists(),
+            "the file itself must be untouched on disk - only the index entry is removed"
+        );
+    }
+
+    /// End-to-end check that removing a watched folder doesn't just delete
+    /// DB rows but actually shrinks the `.db` file on disk - SQLite doesn't
+    /// do this on `DELETE` alone (`Db::reclaim_space`'s doc comment), so
+    /// this pins that `apply_folder_diff` actually calls it once it detects
+    /// a purge happened, not just that the purge itself is correct (already
+    /// covered by the row-count assertions above).
+    #[test]
+    fn apply_folder_diff_shrinks_the_db_file_after_removing_a_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..300 {
+            std::fs::write(
+                dir.path().join(format!("문서_{i}.txt")),
+                "채권 발행 절차를 규정한다 ".repeat(500),
+            )
+            .unwrap();
+        }
+
+        let db_dir = tempfile::tempdir().unwrap();
+        let db_path = db_dir.path().join("test.db");
+        let db = Db::open(&db_path).unwrap();
+        let extractors = default_extractors();
+        let bigram = BigramTokenizer;
+        let kiwi = KiwiActor::spawn();
+        let progress: IndexProgressState = Arc::new(Mutex::new(None));
+
+        let mut watcher = FileWatcher::new::<PathBuf>(&[], Duration::from_millis(3000)).unwrap();
+        let mut watched: Vec<PathBuf> = Vec::new();
+        let watching_config = Config {
+            watched_folders: vec![dir.path().to_path_buf()],
+            ..Config::default()
+        };
+        apply_folder_diff(
+            &db,
+            &extractors,
+            &bigram,
+            &kiwi,
+            &mut watcher,
+            &mut watched,
+            &watching_config,
+            &progress,
+        );
+        // WAL mode (`Db::open`) keeps recent writes in a `-wal` sidecar file
+        // until checkpointed - measuring just the main file here would be
+        // comparing against whatever fraction of the 300 documents happened
+        // to already be checkpointed, not the true total. A manual
+        // checkpoint (outside of `reclaim_space`, which isn't called yet at
+        // this point) makes this a fair baseline.
+        db.conn
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .unwrap();
+        let size_while_watched = std::fs::metadata(&db_path).unwrap().len();
+
+        let unwatched_config = Config {
+            watched_folders: vec![],
+            ..Config::default()
+        };
+        apply_folder_diff(
+            &db,
+            &extractors,
+            &bigram,
+            &kiwi,
+            &mut watcher,
+            &mut watched,
+            &unwatched_config,
+            &progress,
+        );
+        let size_after_removal = std::fs::metadata(&db_path).unwrap().len();
+
+        assert!(
+            size_after_removal < size_while_watched,
+            "expected the .db file to shrink after the folder was removed: \
+             while_watched={size_while_watched}, after_removal={size_after_removal}"
+        );
+    }
+
+    /// Reported bug: removing a folder from `watched_folders` while the app
+    /// is running purges it correctly (previous test), but doing the same
+    /// hand-edit while the app is *closed*, then starting it, left the
+    /// documents stuck - `current` starts empty on a fresh process, so the
+    /// removed folder was never in it to begin with, and the plain
+    /// added/removed diff never notices a folder that's simply absent from
+    /// both sides. Simulates this by skipping the "still watching" first
+    /// call entirely - `apply_folder_diff` only ever sees the config with
+    /// the folder already gone, exactly like a real restart after a
+    /// settings.json hand-edit made while the app wasn't running.
+    #[test]
+    fn apply_folder_diff_purges_a_folder_removed_from_config_while_the_app_was_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("규정.txt"), "채권 발행 절차").unwrap();
+
+        let db = Db::open_in_memory().unwrap();
+        let extractors = default_extractors();
+        let bigram = BigramTokenizer;
+        let kiwi = KiwiActor::spawn();
+        let progress: IndexProgressState = Arc::new(Mutex::new(None));
+
+        // Directly seed the DB as if a *previous* run had indexed this
+        // folder - no `apply_folder_diff` call with it in `watched_folders`
+        // happens in this test at all, matching a process that starts fresh
+        // after the folder was already removed from settings.json.
+        let pipeline = IndexPipeline {
+            conn: &db.conn,
+            config: &Config::default(),
+            extractors: &extractors,
+            bigram: &bigram,
+            kiwi: None,
+        };
+        pipeline.index_directory(dir.path()).unwrap();
+        let tiers = DocumentRepository::count_by_tier(&db.conn).unwrap();
+        let full = tiers.iter().find(|(t, _)| t == "FULL").map_or(0, |(_, c)| *c);
+        assert_eq!(full, 1, "premise: the folder must already be indexed");
+
+        // "Startup": fresh `current`, and `watched_folders` already excludes
+        // the folder - `added`/`removed` are both empty (the folder is on
+        // neither side), which is exactly the case the old diff-only logic
+        // couldn't catch.
+        let mut watcher = FileWatcher::new::<PathBuf>(&[], Duration::from_millis(3000)).unwrap();
+        let mut watched: Vec<PathBuf> = Vec::new();
+        let config = Config {
+            watched_folders: vec![],
+            ..Config::default()
+        };
+        apply_folder_diff(
+            &db,
+            &extractors,
+            &bigram,
+            &kiwi,
+            &mut watcher,
+            &mut watched,
+            &config,
+            &progress,
+        );
+
+        assert!(
+            DocumentRepository::count_by_tier(&db.conn).unwrap().is_empty(),
+            "a folder removed from watched_folders while the app was closed must still be purged on the next start"
+        );
     }
 }

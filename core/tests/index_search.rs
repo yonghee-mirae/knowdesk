@@ -65,6 +65,158 @@ fn indexes_sample_folder_and_finds_snippet() {
     assert!(hit.modified_at.is_some());
 }
 
+/// Reported bug: searching a short English word like "i" highlighted it
+/// inside every unrelated word that happens to contain those letters ("big",
+/// "this", "like") throughout the snippet, not just the actual match (the
+/// standalone word "I") - confusingly making it look like those words were
+/// found too. `find_literal_span`/`highlight_missing_needles`
+/// (`core::search::service`) now require an ASCII alphanumeric needle to sit
+/// at a whole-word boundary before highlighting it.
+#[test]
+fn short_ascii_query_only_highlights_whole_word_matches_not_embedded_substrings() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("sample.txt"),
+        "I have a big dog. This is fun. I like this big idea.",
+    )
+    .unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let bigram = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &bigram,
+        kiwi: None,
+    };
+    pipeline.index_directory(dir.path()).unwrap();
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: None,
+    };
+    let result = search
+        .search(&SearchRequest {
+            query: "i".to_string(),
+            mode: SearchMode::Content,
+            limit: 10,
+        })
+        .unwrap();
+
+    assert_eq!(result.hits.len(), 1, "hits: {:?}", result.hits);
+    let snippet = result.hits[0].snippet.as_deref().unwrap();
+    assert!(
+        snippet.contains(">>I<<") || snippet.contains(">>i<<"),
+        "the standalone word \"I\" must still be highlighted: {snippet:?}"
+    );
+    for embedded in ["b>>i<<g", "th>>i<<s", "l>>i<<ke"] {
+        assert!(
+            !snippet.contains(embedded),
+            "must not highlight \"i\" embedded inside an unrelated word: {snippet:?}"
+        );
+    }
+}
+
+/// Reported bug: a document only mentioning AWS "IAM" (nothing to do with
+/// "am") turned up when searching "am" - `BigramTokenizer` windowed "IAM"
+/// into "IA"/"AM" the same way it does Korean compounds, and "AM" then
+/// case-insensitively matched the query via the `morph` column. Bigram
+/// windowing is now scoped to non-ASCII words (`nlp::bigram`'s doc comment),
+/// so an English acronym stays a single token and no longer produces this
+/// kind of coincidental fragment match.
+#[test]
+fn does_not_match_an_unrelated_query_via_a_windowed_english_acronym() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("질문목록.md"),
+        "ECS Fargate, Lambda 등 computing 자원에 대한 IAM 역할 분리 현황",
+    )
+    .unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let bigram = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &bigram,
+        kiwi: None,
+    };
+    pipeline.index_directory(dir.path()).unwrap();
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: None,
+    };
+    let result = search
+        .search(&SearchRequest {
+            query: "am".to_string(),
+            mode: SearchMode::Content,
+            limit: 10,
+        })
+        .unwrap();
+
+    assert!(
+        result.hits.is_empty(),
+        "a document only containing \"IAM\" must not match an unrelated \"am\" query: {:?}",
+        result.hits
+    );
+}
+
+/// Follow-up to the "IAM" bug above: a plain English word with *attached
+/// punctuation* ("diagram?", ending a sentence) hit the exact same problem
+/// through a different word - the trailing "?" made an earlier fix's
+/// "is the whole word pure ASCII" check fail, so "diagram?" still got
+/// windowed the old way ("di"/"ia"/"ag"/"gr"/"ra"/"am"/"m?") and "am" matched
+/// again. `bigrams_of_word` now splits by ASCII-vs-not run instead of
+/// requiring the whole word to be pure ASCII, so attached punctuation no
+/// longer defeats it.
+#[test]
+fn does_not_match_an_unrelated_query_via_a_windowed_ascii_word_with_attached_punctuation() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("질문목록.md"),
+        "Can you pull up one real order and walk us through its complete lifecycle using actual logs, not a diagram?",
+    )
+    .unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let bigram = BigramTokenizer;
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &bigram,
+        kiwi: None,
+    };
+    pipeline.index_directory(dir.path()).unwrap();
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: None,
+    };
+    let result = search
+        .search(&SearchRequest {
+            query: "am".to_string(),
+            mode: SearchMode::Content,
+            limit: 10,
+        })
+        .unwrap();
+
+    assert!(
+        result.hits.is_empty(),
+        "a document only containing \"diagram?\" must not match an unrelated \"am\" query: {:?}",
+        result.hits
+    );
+}
+
 /// `SearchRequest::limit == 0` means "no limit" (its doc comment) - confirmed
 /// against a dataset bigger than any ordinary positive limit, contrasted with
 /// a small positive limit that really does cap the result count. Covers

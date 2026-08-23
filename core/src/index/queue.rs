@@ -48,12 +48,20 @@ pub fn handle_path(pipeline: &IndexPipeline, path: &Path) -> Result<WatchOutcome
         Ok(WatchOutcome::Indexed(tier))
     } else {
         // The file is already gone so it can't be canonicalized; reconstruct the same
-        // representation used at index time, based on the parent directory (see
-        // `canonical_path`).
+        // representation used at index time, based on the nearest still-existing ancestor
+        // (see `canonical_path`).
         let path = canonical_path(path);
-        match DocumentRepository::remove_path(pipeline.conn, &path.to_string_lossy())? {
-            Some(_) => Ok(WatchOutcome::Removed),
-            None => Ok(WatchOutcome::Ignored),
+        let path_str = path.to_string_lossy();
+        let removed_exact = DocumentRepository::remove_path(pipeline.conn, &path_str)?;
+        // `path` might have been a directory - a whole watched folder (or one nested
+        // inside it) deleted at once, not just a single file - which `remove_path` alone
+        // can't clean up (it only matches one exact `paths.path` value). This purges
+        // anything nested under it; a no-op in the common single-file-delete case.
+        let removed_nested = DocumentRepository::remove_paths_under(pipeline.conn, &path_str)?;
+        if removed_exact.is_some() || !removed_nested.is_empty() {
+            Ok(WatchOutcome::Removed)
+        } else {
+            Ok(WatchOutcome::Ignored)
         }
     }
 }

@@ -118,6 +118,16 @@ export class KdResultList extends HTMLElement {
       if (!row) return;
       this.dispatchEvent(new CustomEvent<number>('kd-row-click', { detail: Number(row.dataset['index']) }));
     });
+    // Same "open it" intent as pressing Enter on the selected row
+    // (`main.ts`'s keydown handler) - a double-click doesn't need to select
+    // first, so this fires independently of the `click` listener above.
+    this.listEl.addEventListener('dblclick', (e) => {
+      const row = (e.target as HTMLElement).closest<HTMLElement>('[data-index]');
+      if (!row) return;
+      this.dispatchEvent(
+        new CustomEvent<number>('kd-row-dblclick', { detail: Number(row.dataset['index']) }),
+      );
+    });
   }
 
   /** `noResults` set means the search ran but found nothing - renders the

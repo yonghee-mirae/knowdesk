@@ -20,8 +20,8 @@ export interface HelpItem {
 }
 
 export const MODE_DESC: Record<SearchMode, string> = {
-  content: '문서 본문에서 찾습니다. 형태소 검색이 가능합니다.',
-  filename: '파일명에서 찾습니다. 입력한 단어가 모두 포함된 파일명을 찾습니다.',
+  content: '문서 본문에서 찾습니다.',
+  filename: '파일명에서 찾습니다.',
 };
 
 const FILTER_HELP: HelpItem[] = [

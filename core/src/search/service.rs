@@ -211,13 +211,53 @@ fn literal_needles(parsed: &ParsedQuery) -> Vec<String> {
 /// Case-insensitively finds one of `needles` in the stored source text
 /// (`body`) and returns its character position (start, length). Returns
 /// `None` if none of them exist literally — the caller then tries again with
-/// `Tokenizer::locate`.
+/// `Tokenizer::locate`. Skips a candidate position that fails
+/// `is_at_word_boundary` when `needs_word_boundary` requires it for that
+/// needle, trying the next occurrence instead of stopping at the first one.
 fn find_literal_span(body: &str, needles: &[String]) -> Option<(usize, usize)> {
     let body_chars: Vec<char> = body.chars().collect();
     needles.iter().find_map(|needle| {
         let needle_chars: Vec<char> = needle.chars().collect();
-        find_ignore_ascii_case(&body_chars, &needle_chars).map(|pos| (pos, needle_chars.len()))
+        let require_boundary = needs_word_boundary(needle);
+        let mut search_from = 0;
+        while let Some(offset) = find_ignore_ascii_case(&body_chars[search_from..], &needle_chars) {
+            let start = search_from + offset;
+            if !require_boundary || is_at_word_boundary(&body_chars, start, needle_chars.len()) {
+                return Some((start, needle_chars.len()));
+            }
+            search_from = start + 1;
+        }
+        None
     })
+}
+
+/// Whether a highlight for `needle` should require it to sit at a whole-word
+/// boundary in the surrounding text, rather than accepting any character
+/// substring as a match. Korean text is agglutinative — a bigram/Kiwi-analyzed
+/// stem is routinely glued directly onto a following particle/ending with no
+/// space in between (e.g. "규정" inside "규정한다"), so an embedded match
+/// there is exactly the point of this fallback highlighting, not a mistake.
+/// English (and other Latin-alphabet text) has no equivalent phenomenon: an
+/// ASCII alphanumeric needle embedded inside an unrelated word (e.g. "i"
+/// inside "big", or "is" inside "this") is essentially always a coincidence,
+/// not a meaningful match (confirmed in practice - a real 1-character query
+/// highlighted "i" inside "big"/"this"/"like" throughout a snippet, none of
+/// which had anything to do with why the document matched). Scoping the
+/// boundary check to needles made up entirely of ASCII letters/digits keeps
+/// the Korean embedding behavior intact while fixing the English case, rather
+/// than requiring boundaries everywhere and breaking the former.
+fn needs_word_boundary(needle: &str) -> bool {
+    !needle.is_empty() && needle.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// Whether `chars[start..start+len]` sits at a whole-word boundary — the
+/// character immediately before `start` (if any) and immediately after
+/// `start+len` (if any) are not alphanumeric, so this span isn't embedded
+/// inside a longer run of letters/digits.
+fn is_at_word_boundary(chars: &[char], start: usize, len: usize) -> bool {
+    let before_ok = start == 0 || !chars[start - 1].is_alphanumeric();
+    let after_ok = start + len >= chars.len() || !chars[start + len].is_alphanumeric();
+    before_ok && after_ok
 }
 
 /// Wraps the character-based span `[start, start+len)` of `body` in `>>...<<`
@@ -250,7 +290,11 @@ fn build_snippet(body: &str, start: usize, len: usize) -> String {
 /// highlights it too. Only looks within this snippet excerpt, not the whole
 /// document — a needle that only occurs elsewhere in the source text is left
 /// alone, since a single snippet window can't show every match location at
-/// once.
+/// once. An ASCII alphanumeric needle only counts at a whole-word boundary
+/// (`needs_word_boundary`/`is_at_word_boundary`) — otherwise a short common
+/// one (e.g. "i") would highlight itself inside every unrelated word that
+/// happens to contain it ("big", "this", "like", ...), not just the actual
+/// match.
 fn highlight_missing_needles(snippet: &str, needles: &[String]) -> String {
     // Strip the existing >>/<< markers, recording which plain-text positions
     // were inside one, so a needle overlapping an existing highlight isn't
@@ -279,11 +323,13 @@ fn highlight_missing_needles(snippet: &str, needles: &[String]) -> String {
         if needle_chars.is_empty() {
             continue;
         }
+        let require_boundary = needs_word_boundary(needle);
         let mut search_from = 0;
         while let Some(offset) = find_ignore_ascii_case(&plain[search_from..], &needle_chars) {
             let start = search_from + offset;
             let end = start + needle_chars.len();
-            if !highlighted[start..end].iter().any(|&h| h) {
+            let at_boundary = !require_boundary || is_at_word_boundary(&plain, start, needle_chars.len());
+            if at_boundary && !highlighted[start..end].iter().any(|&h| h) {
                 highlighted[start..end].iter_mut().for_each(|h| *h = true);
             }
             search_from = start + 1;

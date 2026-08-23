@@ -44,6 +44,13 @@ export async function getSearchDebounceMs(): Promise<number> {
   return invoke<number>('get_search_debounce_ms');
 }
 
+/** Whether Kiwi's morphological analysis is actually usable right now -
+ * `enable_morphological_analysis` (`settings.json`) is on *and* Kiwi itself
+ * initialized successfully. */
+export async function getMorphAnalysisActive(): Promise<boolean> {
+  return invoke<boolean>('get_morph_analysis_active');
+}
+
 /** First ~300 characters of `path`'s stored body text - used when a hit has
  * no snippet (a filter-only query, or filename mode). `null` if `path` isn't
  * indexed, or has no stored body at all (a META-tier hit). */

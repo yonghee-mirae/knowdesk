@@ -66,6 +66,22 @@ impl SearchRepository {
         Ok(())
     }
 
+    /// Number of `content_fts` rows with a non-empty `morph_kiwi` - i.e.
+    /// FULL-tier documents actually morphologically analyzed by Kiwi, out of
+    /// all full-text-indexed documents (every `content_fts` row is FULL tier
+    /// by construction - `index_content` above is only ever called from the
+    /// `Ok` branch of `pipeline::extract_and_index`). Used by "Statistics"
+    /// (tray menu, `src-tauri`'s `compute_stats`) to show how much of the
+    /// full-text index actually got Kiwi's analysis vs. bigram-only (Kiwi
+    /// unavailable, or `enable_morphological_analysis` off - `core::config`).
+    pub fn count_kiwi_analyzed(conn: &Connection) -> rusqlite::Result<i64> {
+        conn.query_row(
+            "SELECT COUNT(*) FROM content_fts WHERE morph_kiwi != ''",
+            [],
+            |row| row.get(0),
+        )
+    }
+
     /// `needles` are plain literal substrings (`search::parser::parse_filename`) -
     /// a filename matches only if it contains every one of them, case-insensitively
     /// (ANDed). Filenames aren't indexed with FTS5 at all (the old `filename_fts`
@@ -314,6 +330,27 @@ fn run_search_query(
 mod tests {
     use super::*;
     use crate::db::Db;
+
+    #[test]
+    fn count_kiwi_analyzed_counts_only_non_empty_morph_kiwi() {
+        let db = Db::open_in_memory().unwrap();
+        for id in ["kiwi1", "kiwi2", "bigram_only"] {
+            db.conn
+                .execute(
+                    "INSERT INTO documents (document_id, file_size, text_bytes, index_tier)
+                     VALUES (?1, 0, 0, 'FULL')",
+                    params![id],
+                )
+                .unwrap();
+        }
+        SearchRepository::index_content(&db.conn, "kiwi1", "본문", "본문", "본문").unwrap();
+        SearchRepository::index_content(&db.conn, "kiwi2", "본문", "본문", "본문").unwrap();
+        // Kiwi unavailable/off (`load_kiwi`/`enable_morphological_analysis`) -
+        // `morph_kiwi` left empty, same as `extract_and_index`'s `unwrap_or_default()`.
+        SearchRepository::index_content(&db.conn, "bigram_only", "본문", "본문", "").unwrap();
+
+        assert_eq!(SearchRepository::count_kiwi_analyzed(&db.conn).unwrap(), 2);
+    }
 
     #[test]
     fn modified_on_filters_by_calendar_day_regardless_of_time_of_day() {

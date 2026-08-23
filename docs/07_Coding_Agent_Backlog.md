@@ -184,6 +184,8 @@ TASK-802 Hotkey Manager (창 사전 생성 + show/focus 방식 — P95 300ms 대
 
 ⚠️ **설정값으로 전환 (2026-08-24):** 하드코딩 상수(`DEFAULT_HOTKEY`, `src-tauri`)였던 걸 `core::config::Config::hotkey`로 옮겨 `settings.json`에서 바꿀 수 있게 했다. `settings.json` 변경 감지 시 색인 워커가 부르는 콜백(`run()`이 `spawn_index_worker`에 넘긴 `on_settings_reload`)이 이전 값을 `global_shortcut().unregister()`하고 새 값을 재등록한다 — 재시작 불필요. 이 콜백을 인젝션한 이유: `run_index_worker`/`spawn_index_worker`는 `AppHandle` 없이도 그대로 유닛 테스트되게 유지하기 위함(가짜 Tauri 앱을 안 만들어도 됨).
 
+⚠️ **토글 동작 3단계로 변경 (2026-08-24):** `toggle_search_window`가 단순 `is_visible()` 토글이 아니라 `is_focused()`까지 같이 봐서 3단계로 동작한다 — 보이고+포커스 있음(숨김), 보이지만 포커스 없음(포커스만 다시 가져옴, 안 숨김), 숨겨짐(보이고 포커스). 트레이 좌클릭과 전역 단축키가 이 함수를 공유(`12_UI_Spec.md` C4 참조).
+
 ---
 
 ## Diagnostics
@@ -194,7 +196,7 @@ TASK-901 Statistics Service (완료, 2026-08-24)
 
 ⚠️ **구현:** Settings Window가 없는 것과 같은 이유로 별도 통계 화면 대신 트레이 메뉴 액션으로 뺐다 (`Settings` / `Statistics` / 구분선 / `Reset Index` / 구분선 / `Quit`). 클릭하면 `src-tauri`의 `compute_stats`가 `knowdesk-cli stats`처럼 독립된 짧은 DB 연결을 열어(색인 워커 스레드와 조율 불필요한 단순 읾기) 전체 문서 수, Full/Meta 건수, DB 파일 크기(`std::fs::metadata`), 마지막 색인 시각(`DocumentRepository::last_indexed_at`, 신설)을 모아 `tauri_plugin_dialog`의 Info 다이얼로그로 보여준다. **Skip 건수는 포함하지 않음** - `core::index::pipeline::index_file`이 SKIP인 파일은 처음부터 `documents` 행 자체를 안 만들기 때문에 DB에서 조회할 수 있는 집계가 아니다(누적 스킵 카운터를 새로 영속화하는 건 이번 범위 밖으로 판단).
 
-TASK-902 Log Export
+TASK-902 Log Export → **폐기 (2026-08-24)** - 불필요하다고 판단, 구현된 적 없음.
 
 TASK-904 초기 색인 진행률 표시 — 온보딩 위저드 아님, 진행률 + "색인 중" 상태 문구만 (`KnowDesk_추가검토사항.md` E-2 참조)
 

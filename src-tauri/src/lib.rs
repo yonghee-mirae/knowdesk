@@ -284,10 +284,19 @@ fn preview_body(path: String) -> Result<Option<String>, String> {
 /// `docs/12_UI_Spec.md` C4: "이미 열려 있는 검색창에서 단축키를 다시 누르면 →
 /// 토글(다시 누르면 닫힘)"). Shared by the tray icon's left click and the
 /// global hotkey.
+/// Three states, not a plain visible/hidden toggle: visible *and* focused ->
+/// hide; visible but not focused (the user clicked away to another app
+/// without closing it) -> just refocus, without hiding first; hidden ->
+/// show and focus. This way pressing the hotkey while it's already open but
+/// not the active window brings it to the front instead of closing it.
 fn toggle_search_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("search") {
-        if window.is_visible().unwrap_or(false) {
+        let visible = window.is_visible().unwrap_or(false);
+        let focused = window.is_focused().unwrap_or(false);
+        if visible && focused {
             let _ = window.hide();
+        } else if visible {
+            let _ = window.set_focus();
         } else {
             let _ = window.show();
             let _ = window.set_focus();

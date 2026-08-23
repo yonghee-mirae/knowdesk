@@ -15,7 +15,7 @@ use knowdesk_core::index::queue;
 use knowdesk_core::index::watcher::FileWatcher;
 use knowdesk_core::nlp::bigram::BigramTokenizer;
 use knowdesk_core::nlp::kiwi::KiwiTokenizer;
-use knowdesk_core::nlp::Tokenizer;
+use knowdesk_core::nlp::{Token, Tokenizer};
 use knowdesk_core::scan::walker;
 use knowdesk_core::search::service::SqliteSearchService;
 use knowdesk_core::search::{
@@ -44,26 +44,29 @@ struct SearchJob {
     reply: mpsc::Sender<Result<Vec<SearchHitDto>, String>>,
 }
 
-/// Confines the DB connection and the optional Kiwi tokenizer to one dedicated
-/// thread and talks to it over a channel, rather than sharing them behind a
-/// `Mutex` in Tauri's managed state. `kiwi_rs::Kiwi` isn't `Send` (its internal
-/// caches hold `Box<dyn Fn>` rule callbacks), so it can never be moved into a
-/// `Mutex<T>` that Tauri's command dispatch requires to be `Send + Sync` - it
-/// has to stay on the single thread that created it for its entire lifetime.
+/// Confines the DB connection to one dedicated thread and talks to it over a
+/// channel, rather than sharing it behind a `Mutex` in Tauri's managed state.
+/// The Kiwi tokenizer itself is *not* owned here - see `KiwiHandle`, shared
+/// with the index/watch worker so the two don't each load their own copy of
+/// Kiwi's large in-memory model.
 struct SearchWorker {
     sender: mpsc::Sender<SearchJob>,
 }
 
 impl SearchWorker {
-    fn spawn(db_path: PathBuf) -> Self {
+    fn spawn(db_path: PathBuf, kiwi: KiwiHandle) -> Self {
         let (sender, receiver) = mpsc::channel::<SearchJob>();
         thread::spawn(move || {
             let db = Db::open(&db_path).expect("failed to open index DB");
-            let kiwi = load_kiwi();
+            let kiwi_available = kiwi.ensure_loaded();
             for job in receiver {
                 let service = SqliteSearchService {
                     conn: &db.conn,
-                    kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
+                    kiwi: if kiwi_available {
+                        Some(&kiwi as &dyn Tokenizer)
+                    } else {
+                        None
+                    },
                 };
                 let result = service
                     .search(&SearchRequest {
@@ -151,6 +154,124 @@ fn load_kiwi() -> Option<KiwiTokenizer> {
         );
     }
     kiwi
+}
+
+/// A tokenize/locate request sent to `KiwiActor`'s thread, plus a reply channel
+/// for the result. `EnsureLoaded` triggers the one-time load attempt
+/// (`load_kiwi()`) if it hasn't happened yet, and is otherwise a cheap no-op
+/// round trip - both call sites (`SearchWorker`, `apply_folder_diff`) use it to
+/// find out whether Kiwi ended up available before building their
+/// `Option<&dyn Tokenizer>` for that job.
+enum KiwiJob {
+    EnsureLoaded {
+        reply: mpsc::Sender<bool>,
+    },
+    Tokenize {
+        text: String,
+        reply: mpsc::Sender<Vec<Token>>,
+    },
+    Locate {
+        text: String,
+        forms: Vec<String>,
+        reply: mpsc::Sender<Option<(usize, usize)>>,
+    },
+}
+
+/// Confines the single shared `KiwiTokenizer` instance to one dedicated
+/// thread, for the same reason `SearchWorker` confines its DB connection:
+/// `kiwi_rs::Kiwi` isn't `Send` (its internal caches hold `Box<dyn Fn>` rule
+/// callbacks), so it must stay on the one thread that created it for its
+/// entire lifetime. Previously `SearchWorker` and the index/watch worker each
+/// called `load_kiwi()` themselves, so each held its own full copy of Kiwi's
+/// model in memory - measured at ~824MB RSS per instance, doubling to ~1.6GB
+/// once any folder was watched. Both now go through this one actor's
+/// `KiwiHandle` instead, cutting that back down to a single instance.
+struct KiwiActor;
+
+impl KiwiActor {
+    fn spawn() -> KiwiHandle {
+        let (sender, receiver) = mpsc::channel::<KiwiJob>();
+        thread::spawn(move || {
+            let mut kiwi: Option<KiwiTokenizer> = None;
+            let mut load_attempted = false;
+            for job in receiver {
+                if !load_attempted {
+                    load_attempted = true;
+                    kiwi = load_kiwi();
+                }
+                match job {
+                    KiwiJob::EnsureLoaded { reply } => {
+                        let _ = reply.send(kiwi.is_some());
+                    }
+                    KiwiJob::Tokenize { text, reply } => {
+                        let tokens = kiwi.as_ref().map(|k| k.tokenize(&text)).unwrap_or_default();
+                        let _ = reply.send(tokens);
+                    }
+                    KiwiJob::Locate { text, forms, reply } => {
+                        let span = kiwi.as_ref().and_then(|k| k.locate(&text, &forms));
+                        let _ = reply.send(span);
+                    }
+                }
+            }
+        });
+        KiwiHandle { sender }
+    }
+}
+
+/// Cloneable, `Send` handle to `KiwiActor`'s thread - stands in for a
+/// `KiwiTokenizer` reference at each of the two call sites that used to hold
+/// their own instance. Implements `Tokenizer` itself so it can be used
+/// anywhere `&dyn Tokenizer` is expected, forwarding each call to the actor
+/// thread and blocking on the reply (the same round-trip pattern
+/// `SearchWorker::search` already uses for its own channel).
+#[derive(Clone)]
+struct KiwiHandle {
+    sender: mpsc::Sender<KiwiJob>,
+}
+
+impl KiwiHandle {
+    /// Returns whether Kiwi is available (configured and loaded successfully),
+    /// triggering the load attempt first if it hasn't happened yet.
+    fn ensure_loaded(&self) -> bool {
+        let (reply, rx) = mpsc::channel();
+        if self.sender.send(KiwiJob::EnsureLoaded { reply }).is_err() {
+            return false;
+        }
+        rx.recv().unwrap_or(false)
+    }
+}
+
+impl Tokenizer for KiwiHandle {
+    fn tokenize(&self, text: &str) -> Vec<Token> {
+        let (reply, rx) = mpsc::channel();
+        if self
+            .sender
+            .send(KiwiJob::Tokenize {
+                text: text.to_string(),
+                reply,
+            })
+            .is_err()
+        {
+            return Vec::new();
+        }
+        rx.recv().unwrap_or_default()
+    }
+
+    fn locate(&self, text: &str, forms: &[String]) -> Option<(usize, usize)> {
+        let (reply, rx) = mpsc::channel();
+        if self
+            .sender
+            .send(KiwiJob::Locate {
+                text: text.to_string(),
+                forms: forms.to_vec(),
+                reply,
+            })
+            .is_err()
+        {
+            return None;
+        }
+        rx.recv().ok().flatten()
+    }
 }
 
 /// Points `KNOWDESK_PDFIUM_LIB_DIR`/`KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`
@@ -500,6 +621,7 @@ fn spawn_index_worker(
     reset_rx: mpsc::Receiver<()>,
     on_settings_reload: impl Fn(&Config, &Config) + Send + 'static,
     progress: IndexProgressState,
+    kiwi: KiwiHandle,
 ) {
     thread::spawn(move || {
         if let Err(e) = run_index_worker(
@@ -509,6 +631,7 @@ fn spawn_index_worker(
             reset_rx,
             on_settings_reload,
             progress,
+            kiwi,
         ) {
             eprintln!("Index worker failed: {e}");
         }
@@ -548,11 +671,11 @@ fn run_index_worker(
     reset_rx: mpsc::Receiver<()>,
     on_settings_reload: impl Fn(&Config, &Config),
     progress: IndexProgressState,
+    kiwi: KiwiHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let db = Db::open(&db_path)?;
     let extractors = default_extractors();
     let bigram = BigramTokenizer;
-    let mut kiwi: Option<KiwiTokenizer> = None;
     let mut watched: Vec<PathBuf> = Vec::new();
     let mut config = initial_config;
     // Starts with no roots - `apply_folder_diff` below adds whatever
@@ -565,7 +688,7 @@ fn run_index_worker(
         &db,
         &extractors,
         &bigram,
-        &mut kiwi,
+        &kiwi,
         &mut folder_watcher,
         &mut watched,
         &config,
@@ -613,7 +736,7 @@ fn run_index_worker(
                     &db,
                     &extractors,
                     &bigram,
-                    &mut kiwi,
+                    &kiwi,
                     &mut folder_watcher,
                     &mut watched,
                     &config,
@@ -641,7 +764,7 @@ fn run_index_worker(
                         &db,
                         &extractors,
                         &bigram,
-                        &mut kiwi,
+                        &kiwi,
                         &mut folder_watcher,
                         &mut watched,
                         &config,
@@ -667,12 +790,21 @@ fn run_index_worker(
                 .filter(|path| watched.iter().any(|folder| path.starts_with(folder)))
                 .collect();
             if !events.is_empty() {
+                // Every folder reaching this point is already watched, which
+                // only happens once `apply_folder_diff` has triggered Kiwi's
+                // load attempt for it - `ensure_loaded()` here is just a
+                // cheap idempotent check of that outcome, not a fresh attempt.
+                let kiwi_available = kiwi.ensure_loaded();
                 let pipeline = IndexPipeline {
                     conn: &db.conn,
                     config: &config,
                     extractors: &extractors,
                     bigram: &bigram,
-                    kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
+                    kiwi: if kiwi_available {
+                        Some(&kiwi as &dyn Tokenizer)
+                    } else {
+                        None
+                    },
                 };
                 for (path, result) in queue::drain(&pipeline, events) {
                     if let Err(e) = result {
@@ -701,10 +833,11 @@ type IndexProgressState = Arc<Mutex<Option<IndexProgress>>>;
 /// removed ones stop being watched. Already-indexed documents from a removed
 /// folder are left alone - not a purge (that's "색인 초기화", not built).
 ///
-/// Lazily loads `kiwi` the first time any folder is ever added, so an app
-/// with nothing configured yet doesn't pay Kiwi's memory cost for nothing
-/// (`SearchWorker`'s doc comment has the full reasoning on why Kiwi can't
-/// just be shared across threads instead).
+/// Triggers `kiwi`'s (shared, actor-owned) load attempt the first time any
+/// folder is ever added, so an app with nothing configured yet doesn't pay
+/// Kiwi's memory cost for nothing (`KiwiActor`'s doc comment has the full
+/// reasoning on why this is a handle to a shared instance rather than one
+/// owned locally).
 ///
 /// While scanning newly-added folders, keeps `progress` updated with a
 /// running total across all of them together (not reset per folder) - matters
@@ -719,7 +852,7 @@ fn apply_folder_diff(
     db: &Db,
     extractors: &[Box<dyn ContentExtractor>],
     bigram: &BigramTokenizer,
-    kiwi: &mut Option<KiwiTokenizer>,
+    kiwi: &KiwiHandle,
     watcher: &mut FileWatcher,
     current: &mut Vec<PathBuf>,
     config: &Config,
@@ -732,16 +865,18 @@ fn apply_folder_diff(
         return;
     }
 
-    if !added.is_empty() && kiwi.is_none() {
-        *kiwi = load_kiwi();
-    }
+    let kiwi_available = !added.is_empty() && kiwi.ensure_loaded();
 
     let pipeline = IndexPipeline {
         conn: &db.conn,
         config,
         extractors,
         bigram,
-        kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
+        kiwi: if kiwi_available {
+            Some(kiwi as &dyn Tokenizer)
+        } else {
+            None
+        },
     };
     // Scanned upfront (a plain directory walk, no file content read yet) so
     // the progress counter reflects the whole batch's total from the start,
@@ -822,7 +957,11 @@ pub fn run() {
     // Once the file/schema/WAL mode already exist, later connections opening
     // concurrently no longer hit this.
     Db::open(&db_path).expect("failed to open index DB");
-    let worker = SearchWorker::spawn(db_path.clone());
+    // Shared by `SearchWorker` and the index/watch worker (spawned below) so
+    // the two don't each load their own copy of Kiwi's model - see
+    // `KiwiActor`'s doc comment.
+    let kiwi = KiwiActor::spawn();
+    let worker = SearchWorker::spawn(db_path.clone(), kiwi.clone());
     // "Reset Index" (tray menu) is sent over this channel rather than acted on
     // directly in the menu-event handler, since the DB connection it needs to
     // wipe belongs to the index worker thread, not the UI thread the tray
@@ -907,6 +1046,7 @@ pub fn run() {
                     }
                 },
                 index_progress,
+                kiwi,
             );
 
             // The tray is the only thing keeping the app around once the
@@ -1113,7 +1253,7 @@ mod tests {
             pipeline.index_directory(dir.path()).unwrap();
         }
 
-        let worker = SearchWorker::spawn(db_path);
+        let worker = SearchWorker::spawn(db_path, KiwiActor::spawn());
         let hits = worker
             .search("채권".to_string(), CoreSearchMode::Content, 10)
             .unwrap();
@@ -1180,6 +1320,7 @@ mod tests {
             reset_rx,
             |_, _| {},
             Arc::new(Mutex::new(None)),
+            KiwiActor::spawn(),
         );
 
         std::thread::sleep(std::time::Duration::from_secs(2));
@@ -1272,6 +1413,7 @@ mod tests {
             reset_rx,
             |_, _| {},
             Arc::new(Mutex::new(None)),
+            KiwiActor::spawn(),
         );
 
         std::thread::sleep(std::time::Duration::from_secs(2));
@@ -1362,7 +1504,7 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let extractors = default_extractors();
         let bigram = BigramTokenizer;
-        let mut kiwi: Option<KiwiTokenizer> = None;
+        let kiwi = KiwiActor::spawn();
         let mut watcher = FileWatcher::new::<PathBuf>(&[], Duration::from_millis(3000)).unwrap();
         let mut watched: Vec<PathBuf> = Vec::new();
         let config = Config {
@@ -1375,7 +1517,7 @@ mod tests {
             &db,
             &extractors,
             &bigram,
-            &mut kiwi,
+            &kiwi,
             &mut watcher,
             &mut watched,
             &config,

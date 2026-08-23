@@ -619,6 +619,13 @@ pub fn run() {
             get_search_debounce_ms,
         ])
         .setup(move |app| {
+            // Tray-only background app - no Dock icon, no Cmd+Tab entry.
+            // `skipTaskbar` (`tauri.conf.json`) is the Windows/Linux equivalent;
+            // macOS has no per-window taskbar flag, it's controlled by the whole
+            // app's activation policy instead.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             let app_handle = app.handle().clone();
 
             // Spawned here (not before `tauri::Builder::default()` above, as

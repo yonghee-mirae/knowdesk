@@ -1,12 +1,11 @@
 // Preview pane (`docs/12_UI_Spec.md` C2) - shows the selected result's
 // metadata and a highlighted body snippet. Index tier (본문 색인/메타 색인) is
-// shown as an icon next to the filename, not a separate row - META-tier hits
-// get that icon instead of a snippet, since their body was never extracted
+// shown as a text value in the metadata table - META-tier hits show "Meta"
+// there instead of a snippet, since their body was never extracted
 // (`docs/04_Data_Model.md`).
 
 import type { SearchHit } from '../types';
 import { renderSnippet, escapeHtml } from '../core/snippet';
-import { MATCH_INFO } from '../core/matchInfo';
 import { formatLocalDateTime } from '../core/datetime';
 
 export class KdPreview extends HTMLElement {
@@ -23,26 +22,13 @@ export class KdPreview extends HTMLElement {
         :host { display: block; overflow-y: auto; }
         :host([hidden]) { display: none; }
         .body { padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; }
-        /* flex + align-items: baseline, not inline text + vertical-align -
-         * lines the icon's bottom edge up with the text's actual baseline
-         * reliably (an inline SVG's vertical-align keyword is inconsistent
-         * across engines and kept floating too high). */
         .p-title {
-          display: flex;
-          align-items: baseline;
-          gap: 6px;
           font-size: 16px;
           font-weight: 700;
           line-height: 1.4;
         }
-        .p-title-text { min-width: 0; text-wrap: balance; }
-        /* Index tier (본문 색인/메타 색인) - a fixed binary today (SKIP-tier
-         * files never surface as a search hit at all, see types.ts), so one
-         * icon is enough; no separate notice line. */
-        .p-tier-icon { flex: none; color: var(--ink-faint); cursor: default; }
-        .p-tier-icon svg { display: block; }
-        /* Path + modified date, grouped into one metadata box (both are
-         * plain file metadata). */
+        .p-title-text { text-wrap: balance; }
+        /* Path, modified date, and index tier, grouped into one metadata box. */
         .p-meta {
           font-family: var(--font-mono);
           font-size: 11.5px;
@@ -54,8 +40,8 @@ export class KdPreview extends HTMLElement {
         }
         .p-meta-row + .p-meta-row { border-top: 1px solid var(--border); }
         .p-meta-path { color: var(--ink-muted); word-break: break-all; }
-        .p-meta-date-row { display: flex; gap: 8px; }
-        .p-meta-label { flex: none; color: var(--ink-faint); }
+        .p-meta-field-row { display: flex; gap: 8px; }
+        .p-meta-label { flex: none; width: 40px; color: var(--ink-faint); }
         .p-meta-value { color: var(--ink); }
         .p-snippet {
           font-size: 13.5px;
@@ -93,18 +79,21 @@ export class KdPreview extends HTMLElement {
    * doesn't need to carry it. */
   showHit(hit: SearchHit): void {
     this.currentPath = hit.path;
-    const tier = hit.indexTier === 'FULL' ? MATCH_INFO.full : MATCH_INFO.meta;
+    const tierText = hit.indexTier === 'FULL' ? 'Full' : 'Meta';
 
     let html = '';
     html += `<div class="p-title">
       <span class="p-title-text">${escapeHtml(hit.filename)}</span>
-      <span class="p-tier-icon" title="${escapeHtml(tier.label)}">${tier.icon}</span>
     </div>`;
     html += `<div class="p-meta">
       <div class="p-meta-row p-meta-path">${escapeHtml(hit.path)}</div>
-      <div class="p-meta-row p-meta-date-row">
+      <div class="p-meta-row p-meta-field-row">
         <span class="p-meta-label">수정일</span>
         <span class="p-meta-value">${hit.modifiedAt ? escapeHtml(formatLocalDateTime(hit.modifiedAt)) : '-'}</span>
+      </div>
+      <div class="p-meta-row p-meta-field-row">
+        <span class="p-meta-label">색인</span>
+        <span class="p-meta-value">${tierText}</span>
       </div>
     </div>`;
 

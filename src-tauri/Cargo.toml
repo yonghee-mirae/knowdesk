@@ -33,6 +33,10 @@ tauri-plugin-single-instance = "2"
 # `.show(callback)` API is used, never a `blocking_*` one, so this can't reproduce
 # the TASK-704 `blocking_pick_folder()` deadlock that got the picker removed.
 tauri-plugin-dialog = "2"
+# "Launch at login" (`Config.auto_start`) - registers/unregisters a login item
+# via the OS-native mechanism (macOS LaunchAgent, Windows registry Run key,
+# Linux XDG autostart .desktop file).
+tauri-plugin-autostart = "2"
 knowdesk-core = { path = "../core" }
 # App-data directory resolution for the index DB path (docs/03_Architecture.md: OS
 # integration lives in src-tauri, never in `core`).

@@ -83,6 +83,13 @@ pub struct Config {
     /// `settings.json` itself (so edits/deletes apply automatically) stays
     /// fixed, since tuning that one isn't a user-facing concern.
     pub file_watch_debounce_ms: u32,
+    /// Whether the app registers itself to launch at OS login
+    /// (`tauri-plugin-autostart`, `src-tauri`'s `sync_autostart`). Applied
+    /// live, same as `hotkey` - changing this and saving registers/unregisters
+    /// the login item without restarting the app. Previously deferred
+    /// (`KnowDesk_추가검토사항.md` E-1, 2026-08-24: "새 의존성이 필요한 별도
+    /// 기능이라 이번 범위에서 제외") - added once the user actually asked for it.
+    pub auto_start: bool,
 }
 
 impl Default for Config {
@@ -96,6 +103,7 @@ impl Default for Config {
             result_limit: DEFAULT_RESULT_LIMIT,
             search_debounce_ms: DEFAULT_SEARCH_DEBOUNCE_MS,
             file_watch_debounce_ms: DEFAULT_FILE_WATCH_DEBOUNCE_MS,
+            auto_start: false,
         }
     }
 }
@@ -247,6 +255,23 @@ mod tests {
         assert_eq!(reloaded.result_limit, 50);
         assert_eq!(reloaded.search_debounce_ms, 300);
         assert_eq!(reloaded.file_watch_debounce_ms, 1000);
+    }
+
+    #[test]
+    fn auto_start_defaults_to_false_and_roundtrips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+
+        assert!(!Config::default().auto_start);
+
+        let config = Config {
+            auto_start: true,
+            ..Config::default()
+        };
+        config.save(&path).unwrap();
+
+        let reloaded = Config::load(Some(&path)).unwrap();
+        assert!(reloaded.auto_start);
     }
 
     #[test]

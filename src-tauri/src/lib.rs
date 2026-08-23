@@ -31,6 +31,7 @@ use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WindowEvent};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
@@ -344,6 +345,25 @@ fn register_hotkey(
                 toggle_search_window(app);
             }
         })
+}
+
+/// Registers/unregisters the OS login item (`tauri-plugin-autostart`) to
+/// match `auto_start` - shared by `run()`'s initial sync and by live-reload
+/// when `settings.json`'s `auto_start` field changes (see the
+/// `on_settings_reload` closure passed to `spawn_index_worker` below), same
+/// pattern as `register_hotkey`. Best-effort - a failure here (e.g. the OS
+/// denies the registration) is logged, not propagated, since it shouldn't
+/// block the rest of startup or a reload.
+fn sync_autostart(app: &AppHandle, enabled: bool) {
+    let result = if enabled {
+        app.autolaunch().enable()
+    } else {
+        app.autolaunch().disable()
+    };
+    if let Err(e) = result {
+        let action = if enabled { "enable" } else { "disable" };
+        eprintln!("Failed to {action} autostart: {e}");
+    }
 }
 
 /// "Statistics" (tray menu, TASK-901): a human-readable index summary - total
@@ -754,6 +774,10 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(worker)
         .manage(index_progress.clone())
         .invoke_handler(tauri::generate_handler![
@@ -783,9 +807,9 @@ pub fn run() {
             let stats_db_path = db_path.clone();
 
             // Spawned here (not before `tauri::Builder::default()` above, as
-            // originally written) because live hotkey reload needs an
-            // `AppHandle`, which doesn't exist until now.
-            let hotkey_app = app_handle.clone();
+            // originally written) because live hotkey/auto_start reload needs
+            // an `AppHandle`, which doesn't exist until now.
+            let reload_app = app_handle.clone();
             spawn_index_worker(
                 db_path,
                 settings_path,
@@ -793,11 +817,11 @@ pub fn run() {
                 reset_rx,
                 move |previous, current| {
                     if current.hotkey != previous.hotkey {
-                        if let Err(e) = hotkey_app.global_shortcut().unregister(previous.hotkey.as_str())
+                        if let Err(e) = reload_app.global_shortcut().unregister(previous.hotkey.as_str())
                         {
                             eprintln!("Failed to unregister old hotkey {}: {e}", previous.hotkey);
                         }
-                        match register_hotkey(&hotkey_app, &current.hotkey) {
+                        match register_hotkey(&reload_app, &current.hotkey) {
                             Ok(()) => eprintln!(
                                 "Hotkey changed: {} -> {}",
                                 previous.hotkey, current.hotkey
@@ -807,6 +831,9 @@ pub fn run() {
                                 current.hotkey
                             ),
                         }
+                    }
+                    if current.auto_start != previous.auto_start {
+                        sync_autostart(&reload_app, current.auto_start);
                     }
                 },
                 index_progress,
@@ -932,6 +959,12 @@ pub fn run() {
             // handle exists, so a parse failure there can't surface through
             // the normal `?` error path the way it can here.
             register_hotkey(&app_handle, &config.hotkey)?;
+
+            // Reconciles the actual OS login-item state with `auto_start` on
+            // every startup, not just when it changes - e.g. it may have
+            // been enabled by hand outside the app, or a previous run may
+            // have failed to apply it.
+            sync_autostart(&app_handle, config.auto_start);
 
             Ok(())
         })

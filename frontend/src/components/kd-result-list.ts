@@ -56,7 +56,6 @@ export class KdResultList extends HTMLElement {
           flex-direction: column;
           gap: 4px;
           padding: 9px 10px;
-          border-radius: 9px;
           cursor: pointer;
           border: 1px solid transparent;
         }

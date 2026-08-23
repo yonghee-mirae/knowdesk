@@ -27,7 +27,6 @@ export class KdPreview extends HTMLElement {
           word-break: break-all;
           background: var(--surface-2);
           border: 1px solid var(--border);
-          border-radius: 8px;
           padding: 8px 10px;
         }
         .p-meta-grid {

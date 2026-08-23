@@ -21,7 +21,7 @@ export interface HelpItem {
 
 export const MODE_DESC: Record<SearchMode, string> = {
   content: '문서 본문에서 찾습니다. 형태소 검색이 가능합니다.',
-  filename: '파일명에서 찾습니다. 정확하게 일치하는 문구를 찾습니다.',
+  filename: '파일명에서 찾습니다. 입력한 단어가 모두 포함된 파일명을 찾습니다.',
 };
 
 const FILTER_HELP: HelpItem[] = [
@@ -101,28 +101,10 @@ const CONTENT_SEARCH_ONLY: HelpItem[] = [
   },
 ];
 
-// Filename mode has no bigram/Kiwi column behind it - filename_fts tokenizes
-// on whitespace/punctuation only, so a plain keyword must match a whole
-// filename token, not just a substring inside one (confirmed in practice:
-// "이사회" alone doesn't find "이사회결의.docx", only "이사회*" or the full
-// "이사회결의" does).
-const FILENAME_SEARCH_ONLY: HelpItem[] = [
-  {
-    group: '검색어',
-    desc: '파일명에 이 단어가 정확히 포함된 파일만 찾습니다 — 본문 검색과 달리 단어 일부만으로는 못 찾습니다.',
-    parts: [{ t: '이사회결의', r: 'v' }],
-  },
-  {
-    group: '검색어',
-    desc: '이사회로 시작하는 파일명을 찾습니다 — 파일명 일부만 알 때 이렇게 씁니다.',
-    parts: [{ t: '이사회', r: 'v' }, { t: '*', r: 'k' }],
-  },
-  {
-    group: '검색어',
-    desc: '둘 중 하나와 일치하는 파일명을 찾습니다.',
-    parts: [{ t: '이사회결의', r: 'v' }, { t: ' ' }, { t: 'OR', r: 'k' }, { t: ' ' }, { t: '실적표', r: 'v' }],
-  },
-];
-
+// Filename mode is a plain SQL substring ("contains") match on `paths.filename`,
+// not FTS5 (`docs/05_Search_Language_v1.md` Filename Mode, `core/src/search/parser.rs`'s
+// `parse_filename`) - AND/OR/NOT, quotes, and the trailing-`*` wildcard have no
+// special meaning here, so there's no search-term syntax left worth a help row
+// beyond "type part of the name." Only the shared filters below still apply.
 export const CONTENT_SEARCH_HELP: HelpItem[] = [...CONTENT_SEARCH_ONLY, ...FILTER_HELP];
-export const FILENAME_SEARCH_HELP: HelpItem[] = [...FILENAME_SEARCH_ONLY, ...FILTER_HELP];
+export const FILENAME_SEARCH_HELP: HelpItem[] = [...FILTER_HELP];

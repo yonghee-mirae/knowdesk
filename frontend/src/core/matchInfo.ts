@@ -7,9 +7,13 @@ export type BadgeKind = 'exact' | 'morph' | 'meta';
 export const MATCH_INFO: Record<BadgeKind, { icon: string; label: string }> = {
   exact: { icon: '🎯', label: '정확 일치' },
   morph: { icon: '🌱', label: '형태소 분석' },
-  // META tier isn't always DRM/security - it also covers CORRUPT/ENCRYPTED/
-  // PARSE_FAIL/EMPTY_TEXT (`docs/04_Data_Model.md`), e.g. samples.db's own
-  // 손상.pdf (a corrupted PDF, nothing to do with security). Don't claim a
-  // reason the UI doesn't actually know.
+  // META tier isn't always DRM/security - it just means content extraction
+  // failed for some reason (corrupted file, encrypted/DRM, parse error, ...).
+  // The specific reason isn't tracked anywhere (`core::index::pipeline`'s
+  // `extract_and_index` lumps every extractor error into META the same way,
+  // `04_Data_Model.md`'s change history), so don't claim a reason the UI
+  // doesn't actually know. A successful extraction with empty body text
+  // (e.g. a textless scanned PDF) is still FULL, not META - only an actual
+  // extraction error demotes to META.
   meta: { icon: '🔒', label: '본문 미색인' },
 };

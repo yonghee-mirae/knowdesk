@@ -334,6 +334,62 @@ fn set_bundled_native_lib_env_vars() {
     }
 }
 
+/// Windows equivalent of the macOS function above - points the same three env
+/// vars at the native libraries/model bundled by the installer (see
+/// `tauri.windows.conf.json`'s `bundle.resources` and `docs/03_Architecture.md`).
+/// Same call site, same rationale (runs before an `AppHandle` exists).
+///
+/// Unlike macOS (`Contents/Resources`) and Linux's `.deb` (`/usr/lib/<name>`),
+/// Tauri's own `resource_dir()` resolves to the **exe's own directory** on
+/// Windows (`tauri_utils::platform::resource_dir_from`: "Windows also
+/// includes the resources in the executable folder") - the installer places
+/// `bundle.resources` right next to the installed `.exe`, no subfolder jump.
+///
+/// ⚠️ **Unverified - no Windows machine available to test this.** Filenames/
+/// layout follow the same assumptions already documented in `env.ps1`:
+/// `pdfium.dll` under a `bin/` folder (pdfium-binaries' Windows release layout
+/// - unconfirmed, mac/Linux release layouts use `lib/` instead) and `kiwi.dll`
+/// directly under `lib/` (confirmed via `scripts/install_kiwi.ps1` per
+/// `env.ps1`, no `lib` prefix on the filename unlike `libkiwi.{so,dylib}`).
+/// Verify against a real packaged build before relying on this.
+///
+/// Same graceful fallback as macOS: an already-set env var wins, and this is
+/// a no-op if the bundled files aren't there - e.g. `cargo run`/`tauri dev`,
+/// which has no `native/` folder next to the dev binary (local dev uses
+/// `env.ps1`'s `.pdfium`/`.kiwi` paths instead).
+#[cfg(target_os = "windows")]
+fn set_bundled_native_lib_env_vars() {
+    let Some(resources) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("native")))
+    else {
+        return;
+    };
+
+    if std::env::var_os("KNOWDESK_PDFIUM_LIB_DIR").is_none() {
+        let dir = resources.join("pdfium");
+        if dir.join("pdfium.dll").is_file() {
+            // SAFETY: called once, single-threaded, before any thread that
+            // could read the environment concurrently is spawned.
+            unsafe { std::env::set_var("KNOWDESK_PDFIUM_LIB_DIR", dir) };
+        }
+    }
+
+    if std::env::var_os("KNOWDESK_KIWI_LIB_PATH").is_none()
+        && std::env::var_os("KNOWDESK_KIWI_MODEL_DIR").is_none()
+    {
+        let lib_path = resources.join("kiwi/kiwi.dll");
+        let model_dir = resources.join("kiwi/models");
+        if lib_path.is_file() && model_dir.is_dir() {
+            // SAFETY: see above.
+            unsafe {
+                std::env::set_var("KNOWDESK_KIWI_LIB_PATH", lib_path);
+                std::env::set_var("KNOWDESK_KIWI_MODEL_DIR", model_dir);
+            }
+        }
+    }
+}
+
 /// Matches `frontend/src/types.ts`'s `SearchHit`.
 #[derive(serde::Serialize)]
 struct SearchHitDto {
@@ -1064,7 +1120,7 @@ fn apply_folder_diff(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     set_bundled_native_lib_env_vars();
 
     let db_path = db_path();

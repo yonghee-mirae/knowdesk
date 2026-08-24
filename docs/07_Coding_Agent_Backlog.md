@@ -211,11 +211,11 @@ TASK-904 초기 색인 진행률 표시 (완료, 2026-08-24) — 온보딩 위�
 
 # Phase D — Windows 이관
 
-TASK-1001 Kiwi / PDFium Windows 바이너리 동봉 및 오프라인 초기화 경로
+TASK-1001 Kiwi / PDFium Windows 바이너리 동봉 및 오프라인 초기화 경로 — 구현했으나 미검증 (2026-08-24, Windows 머신 없음). `tauri.windows.conf.json`(`bundle.resources`) + `src-tauri`의 Windows용 `set_bundled_native_lib_env_vars` 추가, macOS 버전과 동일한 패턴. 파일 경로는 `env.ps1`의 기존 가정(`pdfium.dll`은 `bin/` 아래 - 미확인, `kiwi.dll`은 `lib/` 아래 - 확인됨)을 그대로 따름. `06_Development_Roadmap.md` D1 참조
 
 TASK-1002 Windows 경로 처리 (대소문자 정규화, 260자 초과, UNC 오프라인 처리)
 
-TASK-1003 인스톨러 + 코드사이닝
+TASK-1003 인스톨러 + 코드사이닝 — `bundle.targets` 부분만 구현하고 미검증 (2026-08-24). `tauri.windows.conf.json`에 `targets: ["msi", "nsis"]` 추가했으나 실제 빌드는 못 해봄. 코드사이닝은 여전히 미착수. `06_Development_Roadmap.md` D3 참조
 
 TASK-1004 P95 성능 실측 및 튜닝
 

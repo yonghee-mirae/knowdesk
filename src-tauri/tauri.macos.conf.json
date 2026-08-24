@@ -1,0 +1,11 @@
+{
+  "bundle": {
+    "targets": ["app", "dmg"],
+    "resources": {
+      "../.pdfium/lib/libpdfium.dylib": "native/pdfium/libpdfium.dylib",
+      "../.pdfium/licenses/": "native/pdfium/licenses/",
+      "../.kiwi/lib/libkiwi.0.22.2.dylib": "native/kiwi/libkiwi.dylib",
+      "../.kiwi/models/cong/base/": "native/kiwi/models/"
+    }
+  }
+}

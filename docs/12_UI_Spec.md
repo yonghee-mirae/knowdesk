@@ -157,7 +157,7 @@ C1 레이아웃의 우측 패널. 별도 화면이 아니라 결과 리스트 �
 |---|---|
 | 색인 대상 폴더 | 이미 반영됨 (`watched_folders`) |
 | 제외 패턴 | **추가했다가 결국 완전히 제거, 설정값 아님** - 처음엔 `excluded_extensions`/`excluded_temp_patterns` 둘 다 `Config` 필드로 추가. 이어서 `excluded_extensions`는 제거(지원 포맷이 고정 화이트리스트 PDF/DOCX/PPTX/XLSX/TXT/MD가 되면서 확장자 차단 목록이 중복, `01_KnowDesk_PRD.md` "기본 제외 규칙" 참조). **마지막으로 `excluded_temp_patterns`도 제거(2026-08-24)** - 패턴(`~$`/`.tmp`/`.temp`/`.cache`) 자체가 고정돼 있어 사용자가 튜닝할 게 없다는 판단으로, `settings.json` 필드가 아니라 `core::config::DEFAULT_TEMP_PATTERNS` 내부 고정값으로 되돌림(`core/src/scan/filter.rs`가 직접 참조). 결과적으로 "제외 패턴"은 설정 화면 mockup엔 있었지만 실제 설정값으로는 끝까지 남지 않았다. |
-| 색인 수행 시간대·리소스 상한 | **비노출 유지** - 열린 질문 #6에서 이미 결정됨 (TASK-306, 상시 스로틀링만 구현 범위) |
+| 색인 수행 시간대·리소스 상한 | **비노출 유지** - 열린 질문 #6에서 이미 결정됨. ⚠️ **정정 (2026-08-25):** TASK-306(색인 스로틀링) 자체가 구현된 적이 없다 - 노출 안 하기로 한 게 아니라 애초에 노출할 파라미터가 없는 것. `07_Coding_Agent_Backlog.md` TASK-306 참조 |
 | 전역 단축키 변경 | **이번에 추가** - `hotkey` (`String`), 기존 하드코딩 상수(`DEFAULT_HOTKEY`, 이제 `core::config`로 이동)를 대체. `settings.json` 변경 감지 시 `run()`이 넘긴 콜백(`on_settings_reload`)이 이전 값을 `unregister`하고 새 값을 `register_hotkey`로 재등록 - 재시작 불필요. |
 | 검색 결과 표시 개수 | **이번에 추가** - `result_limit` (`u32`). 기존엔 `frontend/src/main.ts`의 `RESULT_LIMIT` 상수였음. `get_result_limit` 커맨드로 노출, `theme`과 동일하게 페이지 로드+포커스 시점에 다시 읽음. **`0`은 무제한을 뜻하고, 기본값도 무제한(2026-08-24 결정)** - `core::search::SearchRequest::limit`이 `0`(또는 음수)을 SQLite의 "음수 `LIMIT`은 무제한" 관례로 정규화(`SqliteSearchService::search`). |
 | (mockup엔 없었지만 같은 검토에서 발견) 검색 입력 debounce 시간 | **이번에 추가** - `search_debounce_ms` (`u32`, 기본 300 - ⚠️ **2026-08-23 150→300으로 상향**, `frontend/src/main.ts`의 폴백 기본값도 함께 수정). 기존엔 `frontend/src/main.ts`의 `DEBOUNCE_MS` 상수였음. `get_search_debounce_ms` 커맨드로 노출, 나머지 프론트엔드 설정값과 동일한 방식으로 다시 읽음. |
@@ -190,6 +190,6 @@ C1 레이아웃의 우측 패널. 별도 화면이 아니라 결과 리스트 �
 3. 이미 열려 있는 검색창에서 단축키 재입력 시 토글(닫힘) 여부 — 토글로 가정.
 4. **검색 모드(내용/파일명) 전환 키보드 단축키 — 결정됨 (2026-08-22):** `Ctrl+1`/`Ctrl+2`(macOS `Cmd+1`/`Cmd+2`)로 구현됨. `Ctrl+Tab`은 채택하지 않음.
 5. `SearchHit`/`SearchRow`에 수정일·확장자·`index_tier`가 없어 Preview/결과 리스트 요구사항을 충족하려면 백엔드 확장이 선행돼야 함 — TASK-702/703에 포함할지, 별도 태스크로 뺄지.
-6. 색인 스로틀링 파라미터를 설정 화면에 노출할지 — 비노출로 가정.
+6. 색인 스로틀링 파라미터를 설정 화면에 노출할지 — 비노출로 가정. ⚠️ **정정 (2026-08-25):** 스로틀링 자체가 미구현이라 이 질문은 무의미해짐 - `07_Coding_Agent_Backlog.md` TASK-306 참조.
 7. 색인 미완료 상태에서 검색을 막을지 여부 — 막지 않고 진행률만 표시하는 것으로 가정.
 8. **창 크기는 고정 — 결정됨 (2026-08-22):** 결과 개수·프리뷰 유무·뷰포트 폭에 따라 창 크기가 달라지면 안 된다. P95 300ms 달성 방법이 "창을 미리 생성해 숨겨두고 show+focus만 한다"(위 가정, `11_Implementation_Plan.md`)인데, 네이티브 창 리사이즈는 그 자체로 OS 레벨 오버헤드가 있어 이 목표와 충돌한다. 결과 리스트는 창 크기 변경 없이 내부 스크롤로 처리한다(브라우저 프로토타입에서 뷰포트 폭에 따라 프리뷰 패널을 숨기던 반응형 분기를 제거하고 고정 폭으로 수정 — Tauri 창은 우리가 크기를 직접 지정하므로 웹페이지식 반응형이 애초에 불필요). Tauri 창 설정(`resizable`/고정 `width`·`height`)은 TASK-701에서 명시적으로 잠글 것.

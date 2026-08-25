@@ -96,7 +96,7 @@ DRM을 논외로 하면 최대 리스크는 PDF 한글 추출 품질이다. 본�
 - 문서 삭제 시 orphan 정리(`DocumentRepository::remove_path`) — 다른 경로가 그 문서를 더 안 참조하면 `documents`/`content_fts`/`document_bodies`까지 정리. 네트워크 드라이브 대량 오프라인과 실제 삭제를 구분하는 문제(D-1, 미결)는 범위 밖 — 지금은 경로 하나가 사라지면 그대로 삭제로 처리한다.
 - ⚠️ **정리 범위 확장 (2026-08-23):** 위 orphan 정리는 원래 "감시 중 파일 하나가 실제로 사라짐"만 다뤘는데, 실사용 중 그보다 넓은 케이스들이 안 잡히는 걸 발견해 전부 메웠다 — (1) 폴더째 삭제(파일 하나가 아니라 폴더 자체가 없어지면 그 파일의 부모까지 같이 사라져 `canonical_path`의 기존 1단계 복원이 실패하던 문제 — 조상을 계속 거슬러 올라가도록 일반화, `remove_paths_under`로 하위 전부 정리), (2) **앱이 꺼져 있는 동안** 파일/폴더가 삭제된 경우(라이브 `notify` 이벤트가 있을 수 없으므로, 앱 시작 시 감시 폴더마다 `prune_missing_paths_under`로 디스크 존재 여부를 재확인), (3) `watched_folders`에서 폴더를 뺀 경우 — 앱이 켜져 있든 꺼져 있든(`prune_paths_outside_watched`를 `apply_folder_diff` 호출마다 무조건 실행해 현재 설정 기준으로 전체 재정합), (4) 파일 **내용만** 바뀐 경우(`document_id`가 SHA256 해시라 내용이 바뀌면 새 문서로 취급되는데, 예전 `document_id`의 `documents`/`content_fts`/`document_bodies` 행이 고아로 영구히 남던 버그 — `upsert_path`가 재지정 직전의 이전 `document_id`를 기억해뒀다가 정리). 삭제로 비워진 공간이 `.db` 파일 크기에 실제로 반영되도록 `Db::reclaim_space()`(FTS5 `optimize` + `VACUUM` + WAL 체크포인트)도 추가 — `PRAGMA incremental_vacuum`은 이 환경에서 실측상 거의 동작하지 않아(N을 얼마로 줘도 호출당 페이지 1개 정도만 회수) 전체 `VACUUM`으로 전환했다.
 - 헤드리스 검증용 `cli watch <경로>` 서브커맨드 추가.
-- 색인 스로틀링 — 워커 수 제한 + 배치 간 sleep으로 초기 대량 색인이 유휴 CPU 목표(PRD 4장, 1% 미만)를 침해하지 않게 한다.
+- ~~색인 스로틀링~~ — 계획만 있었고 **실제로 구현된 적이 없다**(2026-08-25 확인). `IndexPipeline::index_directory_with_progress`(`core/src/index/pipeline.rs`)는 워커 수 제한도 배치 간 sleep도 없이 파일을 하나씩 순차로 그냥 처리한다. GUI(`src-tauri`)의 색인 워커 스레드도 원래부터 하나뿐이라 "워커 수 제한"이라는 개념 자체가 적용될 대상이 없었다. 실사용 중 색인 속도가 이미 충분히 느리다고 판단해(2026-08-25) 지금은 구현하지 않기로 함 — 아래 `07_Coding_Agent_Backlog.md` TASK-306 참조.
 
 ## B5 Benchmark (완료)
 

@@ -124,7 +124,7 @@ TASK-304 `cli watch` 서브커맨드 — 완료 (헤드리스 검증용)
 
 TASK-305 경로 정규화 버그 수정 — 완료. 최초 스캔(사용자가 준 경로)과 `notify` 이벤트(cwd를 붙인 경로)의 문자열 표현이 달라 같은 파일이 문서 두 개로 나뉘어 색인되고, 내용을 수정해도 예전 내용이 검색에 영구히 남는 버그를 실사용 중 발견. `canonical_path`(`core/src/index/mod.rs`)로 수정, 상세 근거는 `06_Development_Roadmap.md` B4 참조
 
-TASK-306 색인 스로틀링 — 워커 수 제한 + 배치 간 sleep. 초기 대량 색인이 유휴 CPU 목표(PRD 4장)를 침해하지 않게 함 (`KnowDesk_추가검토사항.md` Part F 참조)
+TASK-306 색인 스로틀링 → **미구현으로 확정 (2026-08-25)**. 원래 계획은 "워커 수 제한 + 배치 간 sleep으로 초기 대량 색인이 유휴 CPU 목표(PRD 4장)를 침해하지 않게 함"(`KnowDesk_추가검토사항.md` Part F 참조)이었으나, 실제로 코드가 만들어진 적이 없다 — `core/src/index/pipeline.rs`의 `IndexPipeline::index_directory_with_progress`는 파일을 하나씩 순차로 처리할 뿐 sleep도 워커 수 제한도 없고, `Config`에도 관련 필드가 없다. 다른 TASK-30x(301~305)와 달리 이 항목만 "완료" 표시가 없었던 이유이기도 함. 실사용 중 색인 속도가 이미 충분히 느리다고 판단해 지금은 구현하지 않기로 결정.
 
 ---
 
@@ -161,7 +161,7 @@ TASK-704 Settings Window → "설정 파일 폴더 열기"로 대체 (완료, 20
 
 ⚠️ **버그 발견·수정 (2026-08-24):** `file_watch_debounce_ms`를 설정값으로 빼면서 발견 - `settings.json`에서 폴더를 지운 직후 그 폴더에 파일을 하나 쓰면(`index_worker_applies_settings_file_changes_live` 테스트가 정확히 이 순서), `notify`가 이미 큐에 넣어둔 그 생성 이벤트가 `apply_folder_diff`의 `unwatch()` 호출과 무관하게 그대로 살아남아 결국 색인돼버리는 경쟁 상태가 실제로 있었다 - `unwatch()`는 앞으로의 이벤트만 막고, 이미 채널에 들어온 이벤트를 되돌려 지우지는 않기 때문. 설정 파일 워처의 debounce를 3000ms→200ms로 줄이면서 타이밍이 바뀌어 이 경쟁이 매번 재현되는 쪽으로 굳어져 발견됨(전엔 우연히 안전한 순서로 풀렸을 뿐). 근본 수정: `run_index_worker`가 `folder_watcher`에서 받은 이벤트를 색인하기 직전, 그 경로가 **현재** `watched` 목록 아래에 있는지 다시 한번 필터링 - 타이밍에 의존하지 않는 결정적 수정.
 
-⚠️ **설정값 완전성 재검토 (2026-08-24):** 폐기된 Settings Window mockup(`12_UI_Spec.md` C5)에 있던 항목들이 실제로 `settings.json`에 다 반영됐는지 전수 점검하고, 빠져 있던 것들을 추가했다 — `core::config::Config`에 `excluded_extensions`/`excluded_temp_patterns`(기존엔 고정 상수), `hotkey`(TASK-802 참조), `result_limit`(기존엔 프론트엔드 상수) 4개 필드 신설. `색인 초기화`는 값이 아니라 동작이라 트레이 메뉴 액션("Reset Index")으로 별도 구현(아래 Tray 섹션). `색인 DB 저장 위치`는 이미 확정된 배제 결정(`core/src/config.rs`의 `db_path` `#[serde(skip)]`)을 그대로 유지, `시작 시 자동 실행`은 새 의존성이 필요한 별도 기능이라 이번 범위에서 제외, `색인 스로틀링 파라미터`는 기존 비노출 결정 유지 - 자세한 표는 `12_UI_Spec.md` C5 참조.
+⚠️ **설정값 완전성 재검토 (2026-08-24):** 폐기된 Settings Window mockup(`12_UI_Spec.md` C5)에 있던 항목들이 실제로 `settings.json`에 다 반영됐는지 전수 점검하고, 빠져 있던 것들을 추가했다 — `core::config::Config`에 `excluded_extensions`/`excluded_temp_patterns`(기존엔 고정 상수), `hotkey`(TASK-802 참조), `result_limit`(기존엔 프론트엔드 상수) 4개 필드 신설. `색인 초기화`는 값이 아니라 동작이라 트레이 메뉴 액션("Reset Index")으로 별도 구현(아래 Tray 섹션). `색인 DB 저장 위치`는 이미 확정된 배제 결정(`core/src/config.rs`의 `db_path` `#[serde(skip)]`)을 그대로 유지, `시작 시 자동 실행`은 새 의존성이 필요한 별도 기능이라 이번 범위에서 제외, `색인 스로틀링 파라미터`는 노출할 파라미터 자체가 없음(TASK-306 참조 — 스로틀링 메커니즘이 실제로는 구현된 적이 없다, 2026-08-25 확인) - 자세한 표는 `12_UI_Spec.md` C5 참조.
 
 ⚠️ **`시작 시 자동 실행` 구현 (2026-08-23):** 사용자가 요청해 뒤늦게 추가 - `tauri-plugin-autostart` 의존성 + `Config::auto_start` (`bool`, 기본 `false`) 필드. `hotkey`와 같은 실시간 반영 패턴: `sync_autostart(app, enabled)`가 앱 시작 시와 `settings.json` 리로드(`auto_start`가 바뀔 때만) 양쪽에서 OS 로그인 항목을 값에 맞춰 등록/해제. 실패는 로그만 남기고 무시(OS가 거부해도 앱 시작을 막지 않음). 프론트엔드 IPC 커맨드는 없음 - `settings.json` 직접 편집만으로 켜고 끔, 다른 노출 없는 설정값들과 동일.
 

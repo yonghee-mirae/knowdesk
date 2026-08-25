@@ -173,3 +173,17 @@ DRM을 논외로 하면 최대 리스크는 PDF 한글 추출 품질이다. 본�
 ## D5 DRM 실측
 
 - DRM 적용률 실측 (O-4) → Phase 2 선행 여부 판단
+
+---
+
+# Phase E — 단독 배포 도구 (완료, 2026-08-25)
+
+`knowdesk-cli`(Phase A~D 전체가 다루는 헤드리스 검증 하니스)와는 목적이 다른, 단독 배포용 두 번째 바이너리를 추가했다. 위 Phase A~D의 선형 순서에는 없던 항목이라 별도 Phase로 분리한다.
+
+## E1 `kdfind`
+
+- 사전 색인 DB 없이 폴더+검색어를 한 번에 받아 인메모리로 색인·검색하고 종료 시 아무것도 안 남기는 도구 (`cli/src/bin/find.rs`)
+- 필터(`x:`/`p:`/`m>` 등)는 별도 플래그 없이 GUI와 동일하게 검색어 문자열에 그대로 섞어 씀
+- 단독 배포 대상이라 `KNOWDESK_*` 환경변수를 전혀 읽지 않고, 전용 설정 파일 `settings_cli.json`에서만 Kiwi/PDFium 네이티브 경로를 읽음
+
+상세 설계·근거는 `13_CLI_Tool.md`, 사용법은 `cli/README.md`, TASK는 `07_Coding_Agent_Backlog.md`의 TASK-1101 참조.

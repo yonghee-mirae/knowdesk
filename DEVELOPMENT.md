@@ -96,6 +96,18 @@ rm -rf ./samples/하위폴더               # 폴더째 삭제해도 동일하�
 
 `--db` 옵션 없이 실행하면 현재 디렉터리에 `knowdesk.db`가 생성되므로, 테스트할 땐 `--db` 경로를 지정해 격리하는 걸 권장한다.
 
+### `kdfind` — 사전 색인 없는 1회성 검색 CLI
+
+같은 크레이트(`knowdesk-cli`)의 두 번째 바이너리다. 사용법·설계 근거는 `cli/README.md`(사용자 관점)/`docs/13_CLI_Tool.md`(설계 결정) 참조 — 여기서는 개발 중 실행법만 다룬다.
+
+```bash
+cargo run -p knowdesk-cli --bin kdfind -- ./samples 채권 발행
+```
+
+⚠️ **`source ./env`가 필요 없다:** 위 `knowdesk-cli`와 달리 `kdfind`는 `KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`/`KNOWDESK_PDFIUM_LIB_DIR` 환경변수를 전혀 읽지 않는다 — 대신 앱 데이터 폴더(GUI `settings.json`과 같은 위치)의 `settings_cli.json`에서만 이 경로들을 읽고, 없으면 첫 실행 시 빈 기본값으로 자동 생성한다. 개발 중 Kiwi/PDFium까지 검증하려면 그 파일을 직접 열어 위 "수동 테스트"에서 쓴 경로를 채워 넣는다(예: `.kiwi/lib/libkiwi.so`, `.kiwi/models/cong/base`, `.pdfium/lib`).
+
+`--db` 플래그가 없다 — 매 실행마다 대상 폴더를 인메모리로 새로 색인하고, 종료하면 그 색인은 사라진다.
+
 ---
 
 ## Phase C — 실제 UI (Tauri)

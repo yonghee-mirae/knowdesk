@@ -6,17 +6,35 @@
 //! The library path is set via the `KNOWDESK_PDFIUM_LIB_DIR` environment variable (e.g.
 //! an extracted `lib/` directory). If unset, it falls back to the system library path.
 //! In distributed builds, the installer bundles the native library alongside the
-//! executable (`03_Architecture.md`).
+//! executable (`03_Architecture.md`). A caller can instead call `PdfExtractor::set_lib_dir`
+//! to decide the path itself and bypass the environment variable entirely (`cli`'s
+//! `kdfind`, which reads it from `settings_cli.json` instead).
 
 use super::{ContentExtractor, DocumentInfo, ExtractError, ExtractionResult};
 use pdfium_render::prelude::*;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 static PDFIUM: OnceLock<Result<Pdfium, String>> = OnceLock::new();
+/// Set once via `set_lib_dir` by a caller that resolves the library path itself
+/// (e.g. `cli`'s `kdfind`, from `settings_cli.json`) instead of the
+/// `KNOWDESK_PDFIUM_LIB_DIR` environment variable. `None` (the default, if
+/// `set_lib_dir` is never called) means "use the env var / system library
+/// fallback below, as before".
+static PDFIUM_LIB_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 pub struct PdfExtractor;
 
 impl PdfExtractor {
+    /// Explicitly decides the PDFium library directory, bypassing
+    /// `KNOWDESK_PDFIUM_LIB_DIR` entirely - for callers that resolve the path from
+    /// their own config rather than an environment variable. Must be called before
+    /// the first `extract`/`is_available` call (whichever runs first wins, same as
+    /// any other `OnceLock`); a no-op on later calls.
+    pub fn set_lib_dir(dir: Option<PathBuf>) {
+        let _ = PDFIUM_LIB_DIR.set(dir);
+    }
+
     /// Checks whether libpdfium loaded successfully. Used to decide whether to skip
     /// tests in environments without the native library (e.g. CI).
     pub fn is_available() -> bool {
@@ -25,11 +43,17 @@ impl PdfExtractor {
 
     fn pdfium() -> Result<&'static Pdfium, ExtractError> {
         let result = PDFIUM.get_or_init(|| {
-            let bindings = match std::env::var("KNOWDESK_PDFIUM_LIB_DIR") {
-                Ok(dir) => {
-                    Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&dir))
+            let bindings = match PDFIUM_LIB_DIR.get() {
+                Some(Some(dir)) => {
+                    Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(dir))
                 }
-                Err(_) => Pdfium::bind_to_system_library(),
+                Some(None) => Pdfium::bind_to_system_library(),
+                None => match std::env::var("KNOWDESK_PDFIUM_LIB_DIR") {
+                    Ok(dir) => {
+                        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&dir))
+                    }
+                    Err(_) => Pdfium::bind_to_system_library(),
+                },
             };
             bindings.map(Pdfium::new).map_err(|e| e.to_string())
         });

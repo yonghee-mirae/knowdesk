@@ -32,6 +32,8 @@ knowdesk/
 
 `cli`는 UI 없이 파이프라인 전체(`index` / `search` / `stats` / `bench`)를 구동하는 헤드리스 검증 도구다. Windows 환경 없이도 코어 로직을 자동 테스트할 수 있게 한다.
 
+같은 크레이트에 두 번째 바이너리 `kdfind`(`cli/src/bin/find.rs`)도 있다 — 사전 색인 DB 없이 폴더+검색어를 한 번에 받아 인메모리로 색인·검색하고 끝나는, 단독 배포용 별도 도구다. `knowdesk-cli`와 달리 `KNOWDESK_*` 환경변수를 읽지 않고 전용 설정 파일(`settings_cli.json`)만 쓴다. 상세는 `docs/13_CLI_Tool.md` 참조.
+
 ---
 
 # Application Layers

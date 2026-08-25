@@ -36,6 +36,18 @@ pub const DEFAULT_SEARCH_DEBOUNCE_MS: u32 = 300;
 /// default.
 pub const DEFAULT_FILE_WATCH_DEBOUNCE_MS: u32 = 3000;
 
+/// Per-OS app-data directory - shared by `src-tauri`'s `db_path()`/`settings_path()`
+/// and `cli`'s `settings_cli.json` location. Both are inherently machine-local (a DB
+/// is large and rebuildable, and `watched_folders`/native library paths only make
+/// sense on this machine), so neither belongs in a roaming/synced profile location
+/// even where the OS distinguishes one. Moved here (from `src-tauri`) so `cli` can
+/// share the exact same path without duplicating the logic.
+pub fn app_data_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("KnowDesk")
+}
+
 /// UI color theme (`frontend/src/core/theme.ts` applies it) - a plain data
 /// value, not a UI concept `core` needs to know the meaning of. `System`
 /// (the default) means "no explicit override, follow the OS setting", same

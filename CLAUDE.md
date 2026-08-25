@@ -22,6 +22,7 @@ Before implementing any feature, read below files in `@docs` directory:
 10. 02_Known_Issues.md
 11. 12_UI_Spec.md
 12. KnowDesk_추가검토사항.md
+13. 13_CLI_Tool.md
 
 PRD is the source of truth for product requirements.
 
@@ -76,7 +77,7 @@ Forbidden:
 ```text
 knowdesk/
 ├── core/        # 순수 비즈니스 로직. Tauri를 절대 참조하지 않는다.
-├── cli/         # 헤드리스 검증 하니스 (index / search / stats / bench)
+├── cli/         # 헤드리스 검증 하니스 (index / search / stats / bench) + kdfind (사전 색인 없는 단독 배포용 검색 도구, `docs/13_CLI_Tool.md`)
 ├── src-tauri/   # 트레이·전역단축키·IPC만
 └── frontend/    # TS + Web Components + Vite
 ```

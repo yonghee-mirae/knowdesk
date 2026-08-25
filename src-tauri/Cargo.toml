@@ -38,9 +38,6 @@ tauri-plugin-dialog = "2"
 # Linux XDG autostart .desktop file).
 tauri-plugin-autostart = "2"
 knowdesk-core = { path = "../core" }
-# App-data directory resolution for the index DB path (docs/03_Architecture.md: OS
-# integration lives in src-tauri, never in `core`).
-dirs = "6"
 
 # `NSApplication.activateIgnoringOtherApps` (`activate_app()`) - already in the
 # dependency graph transitively via `tauri`, pinned here to call it directly.

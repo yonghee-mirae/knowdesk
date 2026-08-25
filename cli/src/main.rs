@@ -2,14 +2,10 @@
 //! index/search/stats/bench without a UI.
 
 use clap::{Parser, Subcommand, ValueEnum};
+use knowdesk_cli::support::default_extractors;
 use knowdesk_core::config::Config;
 use knowdesk_core::db::documents::DocumentRepository;
 use knowdesk_core::db::Db;
-use knowdesk_core::extract::ooxml::{DocxExtractor, PptxExtractor};
-use knowdesk_core::extract::pdf::PdfExtractor;
-use knowdesk_core::extract::txt::TxtExtractor;
-use knowdesk_core::extract::xlsx::XlsxExtractor;
-use knowdesk_core::extract::ContentExtractor;
 use knowdesk_core::index::pipeline::IndexPipeline;
 use knowdesk_core::index::queue;
 use knowdesk_core::index::watcher::FileWatcher;
@@ -131,16 +127,6 @@ fn load_kiwi() -> Option<KiwiTokenizer> {
         );
     }
     kiwi
-}
-
-fn default_extractors() -> Vec<Box<dyn ContentExtractor>> {
-    vec![
-        Box::new(TxtExtractor),
-        Box::new(XlsxExtractor),
-        Box::new(DocxExtractor),
-        Box::new(PptxExtractor),
-        Box::new(PdfExtractor),
-    ]
 }
 
 fn run_index(db: &Db, config: &Config, path: &Path) -> anyhow::Result<()> {

@@ -1,6 +1,6 @@
 # Coding Agent Backlog
 
-v1.1 개정 — `06_Development_Roadmap.md`의 Phase A~D 순서에 맞춰 재배열했다. 기존 TASK ID는 최대한 유지하고, 새로 필요해진 항목만 각 블록 안에 번호를 추가했다.
+v1.1 개정 — `06_Development_Roadmap.md`의 Phase A~D 순서에 맞춰 재배열했다. 기존 TASK ID는 최대한 유지하고, 새로 필요해진 항목만 각 블록 안에 번호를 추가했다. Phase E는 이 재배열 이후 단독 배포 도구(`kdfind`)가 추가되며 새로 생겼다 — `06_Development_Roadmap.md`에도 동일하게 반영.
 
 ---
 
@@ -220,3 +220,9 @@ TASK-1003 인스톨러 + 코드사이닝 — `bundle.targets` 부분만 구현�
 TASK-1004 P95 성능 실측 및 튜닝
 
 TASK-1005 DRM 적용률 실측 (O-4)
+
+---
+
+# Phase E — 단독 배포 도구
+
+TASK-1101 `kdfind` — 사전 색인 없는 1회성 검색 CLI (완료, 2026-08-25). `knowdesk-cli`와 별개인 두 번째 바이너리(`cli/src/bin/find.rs`) — 폴더+검색어를 한 번에 받아 인메모리로 색인·검색하고 종료 시 아무것도 안 남긴다. 필터(`x:`/`p:`/`m>` 등)는 별도 플래그 없이 GUI와 동일하게 검색어 문자열에 그대로 섞어 쓴다. 단독 배포 대상이라 `KNOWDESK_*` 환경변수를 전혀 읽지 않고, 전용 설정 파일 `settings_cli.json`에서만 Kiwi/PDFium 네이티브 경로를 읽는다. 상세 설계·근거는 `docs/13_CLI_Tool.md`, 사용법은 `cli/README.md` 참조.

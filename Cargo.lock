@@ -2526,6 +2526,9 @@ dependencies = [
  "anyhow",
  "clap",
  "knowdesk-core",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
 ]
@@ -2537,6 +2540,7 @@ dependencies = [
  "anyhow",
  "calamine",
  "chardetng",
+ "dirs 6.0.0",
  "encoding_rs",
  "kiwi-rs",
  "notify",
@@ -2559,7 +2563,6 @@ dependencies = [
 name = "knowdesk-tauri"
 version = "0.1.4"
 dependencies = [
- "dirs 6.0.0",
  "knowdesk-core",
  "objc2",
  "objc2-app-kit",

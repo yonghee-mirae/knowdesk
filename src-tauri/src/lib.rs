@@ -129,11 +129,11 @@ fn db_path() -> PathBuf {
 /// Per-OS app-data directory shared by `db_path()` and `settings_path()` - both are
 /// inherently machine-local (the DB is large and rebuildable, and `watched_folders`
 /// holds absolute paths that only make sense on this machine), so neither belongs in
-/// a roaming/synced profile location even where the OS distinguishes one.
+/// a roaming/synced profile location even where the OS distinguishes one. Lives in
+/// `knowdesk_core::config` so `cli`'s `settings_cli.json` can share the exact same
+/// path without duplicating the logic.
 fn app_data_dir() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("KnowDesk")
+    knowdesk_core::config::app_data_dir()
 }
 
 /// `KNOWDESK_SETTINGS_PATH` overrides the settings file location, same convention as
@@ -653,7 +653,8 @@ fn compute_stats(db_path: &Path) -> Result<String, String> {
     // Of the FULL-tier documents, how many actually got Kiwi's morphological
     // analysis vs. bigram-only (Kiwi unavailable, or `enable_morphological_analysis`
     // off - `core::config::Config`, `src-tauri`'s `KiwiActor`).
-    let kiwi_analyzed = SearchRepository::count_kiwi_analyzed(&db.conn).map_err(|e| e.to_string())?;
+    let kiwi_analyzed =
+        SearchRepository::count_kiwi_analyzed(&db.conn).map_err(|e| e.to_string())?;
     let last_indexed = DocumentRepository::last_indexed_at(&db.conn).map_err(|e| e.to_string())?;
     let size = std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0);
 
@@ -887,8 +888,7 @@ fn run_index_worker(
                 // effect on the very next file change - same as
                 // `apply_folder_diff`. `&&` short-circuits `ensure_loaded()`
                 // (Kiwi's load attempt) away entirely while it's off.
-                let kiwi_available =
-                    config.enable_morphological_analysis && kiwi.ensure_loaded();
+                let kiwi_available = config.enable_morphological_analysis && kiwi.ensure_loaded();
                 let pipeline = IndexPipeline {
                     conn: &db.conn,
                     config: &config,
@@ -1093,7 +1093,10 @@ fn apply_folder_diff(
                 removed_anything = true;
             }
             Ok(_) => {}
-            Err(e) => eprintln!("Failed to prune missing paths under {}: {e}", folder.display()),
+            Err(e) => eprintln!(
+                "Failed to prune missing paths under {}: {e}",
+                folder.display()
+            ),
         }
         if let Err(e) = watcher.watch(folder) {
             eprintln!("Failed to watch {}: {e}", folder.display());
@@ -1806,8 +1809,14 @@ mod tests {
             &progress,
         );
         let tiers = DocumentRepository::count_by_tier(&db.conn).unwrap();
-        let full = tiers.iter().find(|(t, _)| t == "FULL").map_or(0, |(_, c)| *c);
-        assert_eq!(full, 2, "both files should be indexed before the app 'restarts'");
+        let full = tiers
+            .iter()
+            .find(|(t, _)| t == "FULL")
+            .map_or(0, |(_, c)| *c);
+        assert_eq!(
+            full, 2,
+            "both files should be indexed before the app 'restarts'"
+        );
 
         // The app is closed (no watcher running) and the user deletes one file.
         std::fs::remove_file(&deleted).unwrap();
@@ -1828,7 +1837,10 @@ mod tests {
         );
 
         let tiers = DocumentRepository::count_by_tier(&db.conn).unwrap();
-        let full = tiers.iter().find(|(t, _)| t == "FULL").map_or(0, |(_, c)| *c);
+        let full = tiers
+            .iter()
+            .find(|(t, _)| t == "FULL")
+            .map_or(0, |(_, c)| *c);
         assert_eq!(
             full, 1,
             "the file deleted while the app wasn't running must be pruned on the next scan"
@@ -1874,7 +1886,10 @@ mod tests {
             &progress,
         );
         let tiers = DocumentRepository::count_by_tier(&db.conn).unwrap();
-        let full = tiers.iter().find(|(t, _)| t == "FULL").map_or(0, |(_, c)| *c);
+        let full = tiers
+            .iter()
+            .find(|(t, _)| t == "FULL")
+            .map_or(0, |(_, c)| *c);
         assert_eq!(full, 1, "must be indexed before the folder is removed");
 
         // The folder is dropped from `watched_folders` - the file on disk is
@@ -1895,7 +1910,9 @@ mod tests {
         );
 
         assert!(
-            DocumentRepository::count_by_tier(&db.conn).unwrap().is_empty(),
+            DocumentRepository::count_by_tier(&db.conn)
+                .unwrap()
+                .is_empty(),
             "documents from a folder removed from watched_folders must be purged"
         );
         let path_count: i64 = db
@@ -2018,7 +2035,10 @@ mod tests {
         };
         pipeline.index_directory(dir.path()).unwrap();
         let tiers = DocumentRepository::count_by_tier(&db.conn).unwrap();
-        let full = tiers.iter().find(|(t, _)| t == "FULL").map_or(0, |(_, c)| *c);
+        let full = tiers
+            .iter()
+            .find(|(t, _)| t == "FULL")
+            .map_or(0, |(_, c)| *c);
         assert_eq!(full, 1, "premise: the folder must already be indexed");
 
         // "Startup": fresh `current`, and `watched_folders` already excludes

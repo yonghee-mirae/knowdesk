@@ -25,6 +25,7 @@ quick-xml = "0.41"
 pdfium-render = "0.9"
 kiwi-rs = "2026.7.24"
 notify = "8.2"
+dirs = "6"
 
 [dev-dependencies]
 tempfile = "3"

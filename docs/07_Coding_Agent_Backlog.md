@@ -226,3 +226,7 @@ TASK-1005 DRM 적용률 실측 (O-4)
 # Phase E — 단독 배포 도구
 
 TASK-1101 `kdfind` — 사전 색인 없는 1회성 검색 CLI (완료, 2026-08-25). `knowdesk-cli`와 별개인 두 번째 바이너리(`cli/src/bin/find.rs`) — 폴더+검색어를 한 번에 받아 인메모리로 색인·검색하고 종료 시 아무것도 안 남긴다. 필터(`x:`/`p:`/`m>` 등)는 별도 플래그 없이 GUI와 동일하게 검색어 문자열에 그대로 섞어 쓴다. 단독 배포 대상이라 `KNOWDESK_*` 환경변수를 전혀 읽지 않고, 전용 설정 파일 `settings_cli.json`에서만 Kiwi/PDFium 네이티브 경로를 읽는다. 상세 설계·근거는 `docs/13_CLI_Tool.md`, 사용법은 `cli/README.md` 참조.
+
+⚠️ **kdfind 전용 병렬 색인 추가 (2026-08-25):** GUI가 지켜야 하는 유휴 CPU 목표(TASK-306 참조)가 kdfind에는 적용되지 않는다는 점에 착안해, `cli/src/parallel_index.rs`(kdfind 전용, `core`/`src-tauri` 무변경)로 워커 스레드 여러 개가 해싱·추출·bigram 토크나이즈를 병렬 수행하도록 확장했다. SQLite 쓰기는 `Mutex<Connection>`으로 직렬화(`rusqlite::Connection`이 `Send`이지만 `Sync`는 아님), Kiwi는 `!Send`라 전용 액터 스레드(`KiwiHandle`, `src-tauri`의 `KiwiActor`와 동일 패턴을 `cli` 안에 독립 재구현)로 처리. 3000개 파일 코퍼스 실측: 순차 1분 31초 → 병렬(16코어) 27초.
+
+TASK-1102 Ubuntu `.deb` 패키징 (완료, 2026-08-25). `cargo-deb`로 `kdfind`만 담은 패키지 생성(`cli/Cargo.toml`의 `[package.metadata.deb]`), Ubuntu 24.04만 지원 대상. Kiwi(v0.22.2)/PDFium을 `/usr/lib/kdfind/`에 동봉하고, `CliConfig::resolve_paths`(`cli/src/cli_config.rs`)가 실행 파일 경로(`/usr/bin/kdfind`) 기준으로 자동 탐지해 설치 직후 `settings_cli.json` 편집 없이 동작(단, Kiwi는 메모리 비용 때문에 `enable_morphological_analysis`는 여전히 수동으로 켜야 함 — 자동 탐지와 별개의 게이트). `settings_cli.json`에 명시값이 있으면 그게 항상 우선. 사내 전용 도구라 라이선스 필드/`LICENSE` 파일 없이 `copyright`에 "internal use only" 문구만 기록, 메인테이너는 `Yonghee Yu <yonghee.yu@miraeasset.com>`. 실제 `dpkg -i`/`dpkg -r`로 설치·제거, 환경변수를 전부 비운 셸에서 Kiwi/PDF 자동 탐지 정상 동작 확인.

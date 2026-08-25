@@ -6,7 +6,8 @@
 //! `Config` doesn't have at all (the native library paths below). `kdfind` reads
 //! `KNOWDESK_*` environment variables for nothing - unlike `knowdesk-cli`, it's
 //! meant to be distributed standalone, so every native library path is configured
-//! through this one file instead.
+//! through this one file instead - or auto-detected relative to the installed
+//! `.deb` package's layout when the file leaves them unset (`resolve_paths`).
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -53,6 +54,67 @@ impl CliConfig {
         std::fs::write(path, serde_json::to_string_pretty(self)?)?;
         Ok(())
     }
+
+    /// The native library paths this run should actually use: an explicit
+    /// `settings_cli.json` value always wins; a field left `null` falls back to
+    /// whatever's bundled at the `.deb` package's install layout (binary at
+    /// `/usr/bin/kdfind`, libraries under `/usr/lib/kdfind/{pdfium,kiwi}`) - so a
+    /// packaged install works without the user ever having to open this file,
+    /// while still leaving it possible to point at a different build.
+    /// `enable_morphological_analysis` is checked separately by the caller either
+    /// way - Kiwi's own memory cost means it should never turn on just because
+    /// bundled files happen to exist.
+    pub fn resolve_paths(&self) -> ResolvedPaths {
+        self.resolve_paths_from(bundled_lib_dir())
+    }
+
+    /// Testable core of `resolve_paths` — `base` is normally `bundled_lib_dir()`'s
+    /// result, taken as a parameter so tests can point it at a temp directory
+    /// instead of depending on the test binary's own `current_exe()`.
+    fn resolve_paths_from(&self, base: Option<PathBuf>) -> ResolvedPaths {
+        let pdfium_lib_dir = self.pdfium_lib_dir.clone().or_else(|| {
+            let dir = base.as_ref()?.join("pdfium");
+            dir.join("libpdfium.so").is_file().then_some(dir)
+        });
+        let kiwi_lib_path = self.kiwi_lib_path.clone().or_else(|| {
+            base.as_ref()
+                .map(|b| b.join("kiwi/libkiwi.so"))
+                .filter(|p| p.is_file())
+        });
+        let kiwi_model_dir = self.kiwi_model_dir.clone().or_else(|| {
+            base.as_ref()
+                .map(|b| b.join("kiwi/models/cong/base"))
+                .filter(|p| p.is_dir())
+        });
+
+        ResolvedPaths {
+            pdfium_lib_dir,
+            kiwi_lib_path,
+            kiwi_model_dir,
+        }
+    }
+}
+
+/// Output of `CliConfig::resolve_paths` - same shape as the three path fields
+/// on `CliConfig` itself, but with the bundled-install fallback already
+/// applied.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResolvedPaths {
+    pub pdfium_lib_dir: Option<PathBuf>,
+    pub kiwi_lib_path: Option<PathBuf>,
+    pub kiwi_model_dir: Option<PathBuf>,
+}
+
+/// The `.deb` package's layout: the binary installs to `/usr/bin/kdfind` and
+/// the bundled native libraries to `/usr/lib/kdfind/{pdfium,kiwi}` - one
+/// level up from the executable's own directory, then into `lib/kdfind`.
+/// `None` if the executable's own path can't be determined
+/// (`current_exe()` failing) or has no parent directory to climb from.
+fn bundled_lib_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let bin_dir = exe.parent()?;
+    let usr_dir = bin_dir.parent()?;
+    Some(usr_dir.join("lib/kdfind"))
 }
 
 /// `settings_cli.json`'s fixed location - same app-data folder as the GUI's
@@ -117,5 +179,81 @@ mod tests {
         assert!(config.enable_morphological_analysis);
         assert_eq!(config.kiwi_lib_path, None);
         assert_eq!(config.pdfium_lib_dir, None);
+    }
+
+    /// Builds a fake `/usr/lib/kdfind/{pdfium,kiwi}` tree under a temp dir, in
+    /// the exact shape a `.deb` install would produce.
+    fn fake_bundled_install() -> tempfile::TempDir {
+        let base = tempfile::tempdir().unwrap();
+        let pdfium_dir = base.path().join("pdfium");
+        std::fs::create_dir_all(&pdfium_dir).unwrap();
+        std::fs::write(pdfium_dir.join("libpdfium.so"), "fake").unwrap();
+
+        let kiwi_model_dir = base.path().join("kiwi/models/cong/base");
+        std::fs::create_dir_all(&kiwi_model_dir).unwrap();
+        std::fs::write(base.path().join("kiwi/libkiwi.so"), "fake").unwrap();
+
+        base
+    }
+
+    #[test]
+    fn resolve_paths_falls_back_to_bundled_install_when_unset() {
+        let install = fake_bundled_install();
+        let config = CliConfig::default();
+
+        let resolved = config.resolve_paths_from(Some(install.path().to_path_buf()));
+
+        assert_eq!(resolved.pdfium_lib_dir, Some(install.path().join("pdfium")));
+        assert_eq!(
+            resolved.kiwi_lib_path,
+            Some(install.path().join("kiwi/libkiwi.so"))
+        );
+        assert_eq!(
+            resolved.kiwi_model_dir,
+            Some(install.path().join("kiwi/models/cong/base"))
+        );
+    }
+
+    #[test]
+    fn resolve_paths_prefers_an_explicit_settings_value_over_the_bundled_install() {
+        let install = fake_bundled_install();
+        let config = CliConfig {
+            pdfium_lib_dir: Some(PathBuf::from("/custom/pdfium")),
+            ..CliConfig::default()
+        };
+
+        let resolved = config.resolve_paths_from(Some(install.path().to_path_buf()));
+
+        assert_eq!(
+            resolved.pdfium_lib_dir,
+            Some(PathBuf::from("/custom/pdfium"))
+        );
+        // The other two fields were left unset, so they still fall back.
+        assert_eq!(
+            resolved.kiwi_lib_path,
+            Some(install.path().join("kiwi/libkiwi.so"))
+        );
+    }
+
+    #[test]
+    fn resolve_paths_ignores_a_bundled_dir_missing_the_expected_files() {
+        // Directory exists but doesn't actually contain libpdfium.so/libkiwi.so -
+        // must not report a path that doesn't work.
+        let base = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(base.path().join("pdfium")).unwrap();
+        let config = CliConfig::default();
+
+        let resolved = config.resolve_paths_from(Some(base.path().to_path_buf()));
+
+        assert_eq!(resolved.pdfium_lib_dir, None);
+        assert_eq!(resolved.kiwi_lib_path, None);
+        assert_eq!(resolved.kiwi_model_dir, None);
+    }
+
+    #[test]
+    fn resolve_paths_with_no_bundled_install_and_no_explicit_config_is_all_none() {
+        let config = CliConfig::default();
+        let resolved = config.resolve_paths_from(None);
+        assert_eq!(resolved, ResolvedPaths::default());
     }
 }

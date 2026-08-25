@@ -87,6 +87,35 @@
 
 3000개 텍스트 파일 코퍼스(`core/examples/gen_bench_corpus.rs`)로 실측: 기존 `knowdesk-cli index`(단일 스레드, 파일 DB) 1분 31초 → `kdfind`(16코어, 인메모리 DB) 27초.
 
+### Ubuntu `.deb` 패키징 (2026-08-25 추가, Ubuntu 24.04만 지원 대상)
+
+`cargo deb`(`cargo install cargo-deb`)로 `kdfind`만 담은 `.deb`를 만든다 — 크레이트 안의 다른 바이너리(`cli`, 헤드리스 검증용)는 이 패키지에 넣지 않는다. 설정은 `cli/Cargo.toml`의 `[package.metadata.deb]`.
+
+`assets`가 저장소 루트의 `.pdfium/lib`, `.kiwi/lib`, `.kiwi/models`를 그대로 참조하므로, 빌드 전에 `DEVELOPMENT.md`의 "수동 테스트" 절차대로 이 두 폴더를 미리 받아둬야 한다(`.gitignore`로 커밋 대상 아님, 로컬에서 직접 압축 해제).
+
+```bash
+cargo deb -p knowdesk-cli
+# → target/debian/kdfind_<버전>-1_amd64.deb
+```
+
+**설치 위치** (`assets` 목록으로 명시, `$auto`는 안 씀):
+
+```
+/usr/bin/kdfind
+/usr/lib/kdfind/pdfium/libpdfium.so
+/usr/lib/kdfind/kiwi/libkiwi.so.0.22.2 (+ libkiwi.so/.so.0 심볼릭 링크)
+/usr/lib/kdfind/kiwi/models/cong/base/*
+/usr/share/doc/kdfind/{README.md,copyright}
+```
+
+이 경로는 `.pdfium/lib`, `.kiwi/lib`, `.kiwi/models/cong/base`에 이미 있는(로컬 개발용 `env`/`DEVELOPMENT.md`가 쓰는 것과 동일한) 파일을 그대로 담는다 — Kiwi는 반드시 v0.22.2(`kiwi-rs`와 ABI가 맞는 버전, `11_Implementation_Plan.md` 참조).
+
+**설치 후 바로 동작하는 이유**: `/usr/bin` + `/usr/lib/kdfind`라는 이 고정 레이아웃을 `CliConfig::resolve_paths`(`cli/src/cli_config.rs`)가 실행 파일 경로(`current_exe()`) 기준으로 자동 탐지한다 — `settings_cli.json`의 세 경로 필드가 비어 있으면(기본값) 이 위치를 찾아보고, 있으면 그대로 쓴다. `settings_cli.json`에 명시적으로 값이 있으면 그게 항상 우선한다. PDFium은 무조건 자동 적용되지만, Kiwi는 메모리 비용 때문에 파일이 있어도 `enable_morphological_analysis: true`를 직접 켜야 실제로 로드된다(자동 탐지와 별개의 게이트).
+
+**메타데이터 결정**: 사내 전용 도구라 라이선스 필드/`LICENSE` 파일 없음(`copyright` 파일에 "internal use only, not for redistribution" 문구만 기록), 메인테이너는 `Yonghee Yu <yonghee.yu@miraeasset.com>`.
+
+**검증**: `cargo deb -p knowdesk-cli`로 빌드 → `dpkg --contents`로 파일 목록 확인 → 실제로 `sudo dpkg -i`로 설치 → 환경변수 전부 비운 셸(`env -i`)에서 `settings_cli.json`에 경로 없이 `enable_morphological_analysis: true`만 켠 채 Kiwi 형태소 검색·PDF 본문 검색 정상 동작 확인 → `sudo dpkg -r kdfind`로 제거까지 확인.
+
 ---
 
 ## 검증

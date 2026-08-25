@@ -221,3 +221,28 @@ fn first_run_creates_a_default_settings_cli_json() {
         "text: {text}"
     );
 }
+
+#[test]
+fn version_flag_prints_the_version_and_exits_successfully() {
+    let sample_dir = tempfile::tempdir().unwrap();
+    let data_home = tempfile::tempdir().unwrap();
+
+    let short = run(sample_dir.path(), data_home.path(), &["-v"]);
+    assert!(
+        short.trim() == format!("kdfind {}", env!("CARGO_PKG_VERSION")),
+        "stdout: {short:?}"
+    );
+
+    // `--version` (long form) must print the exact same thing.
+    let long = run(sample_dir.path(), data_home.path(), &["--version"]);
+    assert_eq!(short, long);
+}
+
+#[test]
+fn help_lists_the_version_flag() {
+    let sample_dir = tempfile::tempdir().unwrap();
+    let data_home = tempfile::tempdir().unwrap();
+
+    let stdout = run(sample_dir.path(), data_home.path(), &["--help"]);
+    assert!(stdout.contains("-v, --version"), "stdout: {stdout}");
+}

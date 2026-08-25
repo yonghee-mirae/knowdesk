@@ -185,5 +185,12 @@ DRM을 논외로 하면 최대 리스크는 PDF 한글 추출 품질이다. 본�
 - 사전 색인 DB 없이 폴더+검색어를 한 번에 받아 인메모리로 색인·검색하고 종료 시 아무것도 안 남기는 도구 (`cli/src/bin/find.rs`)
 - 필터(`x:`/`p:`/`m>` 등)는 별도 플래그 없이 GUI와 동일하게 검색어 문자열에 그대로 섞어 씀
 - 단독 배포 대상이라 `KNOWDESK_*` 환경변수를 전혀 읽지 않고, 전용 설정 파일 `settings_cli.json`에서만 Kiwi/PDFium 네이티브 경로를 읽음
+- kdfind 전용 병렬 색인(`cli/src/parallel_index.rs`) — GUI/`knowdesk-cli`는 그대로 단일 스레드 유지, kdfind만 코어를 전부 써서 속도를 높임 (`core`/`src-tauri`는 무변경)
 
-상세 설계·근거는 `13_CLI_Tool.md`, 사용법은 `cli/README.md`, TASK는 `07_Coding_Agent_Backlog.md`의 TASK-1101 참조.
+## E2 Ubuntu `.deb` 패키징
+
+- `cargo-deb`로 `kdfind`만 담은 `.deb` 패키지 (`cli/Cargo.toml`의 `[package.metadata.deb]`), Ubuntu 24.04만 지원 대상
+- Kiwi(`v0.22.2`)/PDFium을 `/usr/lib/kdfind/`에 동봉, `kdfind`가 실행 파일 경로 기준으로 자동 탐지(`CliConfig::resolve_paths`) — 설치 직후 `settings_cli.json` 편집 없이 동작(Kiwi는 메모리 비용 때문에 `enable_morphological_analysis`만 별도로 켜야 함)
+- 사내 전용 도구라 라이선스 필드/`LICENSE` 파일 없음
+
+상세 설계·근거는 `13_CLI_Tool.md`, 사용법은 `cli/README.md`, TASK는 `07_Coding_Agent_Backlog.md`의 TASK-1101/1102 참조.

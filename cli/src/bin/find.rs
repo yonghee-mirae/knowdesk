@@ -4,11 +4,12 @@
 //!
 //! Distributed standalone (separately from the GUI app and `knowdesk-cli`), so
 //! unlike both of those, it reads no `KNOWDESK_*` environment variables at all -
-//! every native library path comes from its own `settings_cli.json`
-//! (`knowdesk_cli::cli_config`).
+//! every native library path comes from its own `settings_cli.json`, falling
+//! back to the `.deb` package's bundled install layout when unset
+//! (`knowdesk_cli::cli_config::CliConfig::resolve_paths`).
 
 use clap::Parser;
-use knowdesk_cli::cli_config::{cli_settings_path, CliConfig};
+use knowdesk_cli::cli_config::{cli_settings_path, CliConfig, ResolvedPaths};
 use knowdesk_cli::parallel_index::{index_directory_parallel, KiwiHandle};
 use knowdesk_cli::support::default_extractors_sync;
 use knowdesk_core::config::Config;
@@ -25,45 +26,54 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     name = "kdfind",
-    about = "Searches a folder without a pre-built index — scans it in-memory and \
-             searches it in the same run, then discards everything.",
+    version,
+    // The `version` field below defines its own `-v`/`--version` (clap's
+    // default short for the auto-generated one is `-V`, not `-v`) - this just
+    // stops clap from also registering its own, which would otherwise collide.
+    disable_version_flag = true,
+    about = concat!(
+        "Searches the contents of Word, Excel, PowerPoint, PDF, TXT, and Markdown files in a folder.\n",
+        "kdfind ", env!("CARGO_PKG_VERSION"), " - Yonghee Yu <yonghee.yu@miraeasset.com>"
+    ),
     after_help = "EXAMPLES:\n  \
-                  kdfind ./docs 채권 AND 발행          # no quoting needed - AND/OR/NOT \
-                  are plain words\n  \
-                  kdfind ./docs '\"채권 발행\"'          # phrase search: wrap the whole \
-                  thing in single quotes so the shell\n                                       \
-                  passes the literal double quotes through\n  \
-                  kdfind ./docs -f -l 5 보고서          # filename mode, top 5 results\n\n\
-                  Put -f/-l before the query text. Once the query starts, everything \
-                  after it — including anything that looks like -f/-l — is part of the \
-                  query itself, so a document containing the word \"-l\" is still \
-                  findable.\n\n\
-                  Filters (x:/p:/m>/m</m=) work the same as the GUI search box - just \
-                  type them as part of the query, e.g. `채권 x:pdf p:리서치`."
+                  kdfind ./docs budget AND report\n  \
+                  kdfind ./docs '\"quarterly report\"'   # phrase search - quote for the shell\n  \
+                  kdfind -f -l 5 ./docs invoice        # filename mode, top 5 results"
 )]
 struct Cli {
-    /// Folder to scan.
+    /// Folder to scan, including all subdirectories.
     path: PathBuf,
 
-    /// Search query — same syntax as the GUI search box (keywords, "phrase",
-    /// AND/OR/NOT, prefix*, grouping, and x:/p:/m> filters). Given as separate
-    /// words, they're rejoined with spaces, so `AND`/`OR`/`NOT` need no quoting.
-    /// Must come after `-f`/`-l` - once it starts, everything remaining
-    /// (including a token that looks like `-f`/`-l`) is part of the query
-    /// itself, not a flag. This is deliberate: a query genuinely containing a
-    /// dash-led word (e.g. searching for the literal text "-l") must still be
-    /// possible, and that's only unambiguous if flags are required to come
-    /// first.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    // Rejoined with spaces, so AND/OR/NOT need no quoting (the shell already
+    // splits them into separate words). Must come after -f/-l: once the query
+    // starts, everything after (even a token that looks like -f/-l) is part of
+    // it, not a flag - otherwise a query genuinely containing "-l" as text
+    // could never be searched for.
+    #[arg(
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        help = "Search query.\n\
+                keywords         - all must appear\n\
+                '\"phrase\"'       - exact phrase, words in that order (quote for the shell)\n\
+                AND / OR / NOT   - combine or exclude terms\n\
+                word*            - prefix match (matches any word starting with \"word\")\n\
+                x:ext            - only files with this extension\n\
+                p:text           - only paths containing this text\n\
+                m> / m< / m=date - modified after / before / on this date"
+    )]
     query: Vec<String>,
 
-    /// Filename-mode search instead of the default content search.
+    /// Search by filename instead of content. Must come before the query.
     #[arg(short = 'f', long = "filename")]
     filename: bool,
 
-    /// Max number of results. 0 = unlimited.
+    /// Max number of results (0 = unlimited). Must come before the query.
     #[arg(short = 'l', long = "limit", default_value_t = 0)]
     limit: i64,
+
+    /// Print version and exit.
+    #[arg(short = 'v', long = "version", action = clap::ArgAction::Version)]
+    version: Option<bool>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -86,17 +96,19 @@ fn main() -> anyhow::Result<()> {
         config
     };
 
-    // kdfind resolves every native library path from `settings_cli.json` alone -
-    // `PdfExtractor` otherwise falls back to `KNOWDESK_PDFIUM_LIB_DIR`, which this
-    // tool deliberately never reads.
-    PdfExtractor::set_lib_dir(config.pdfium_lib_dir.clone());
+    // kdfind resolves every native library path from `settings_cli.json`, falling
+    // back to the `.deb` package's bundled install layout when a field is left
+    // unset (`CliConfig::resolve_paths`) - `PdfExtractor` otherwise falls back to
+    // `KNOWDESK_PDFIUM_LIB_DIR`, which this tool deliberately never reads.
+    let resolved = config.resolve_paths();
+    PdfExtractor::set_lib_dir(resolved.pdfium_lib_dir.clone());
 
     // A one-shot tool with no idle-CPU budget to protect (unlike the GUI,
     // `docs/06_Development_Roadmap.md` B4) - spend every core to finish
     // faster. `knowdesk_cli::parallel_index` is kdfind-only; `knowdesk-cli`
     // and the GUI keep using `core::index::pipeline::IndexPipeline`'s
     // single-threaded path unchanged (`docs/13_CLI_Tool.md`).
-    let kiwi = load_kiwi(&config);
+    let kiwi = load_kiwi(&config, &resolved);
 
     let db = Db::open_in_memory()?;
     let extractors = default_extractors_sync();
@@ -269,24 +281,30 @@ impl Colors {
     }
 }
 
-/// Loads Kiwi strictly from `settings_cli.json` - never from
+/// Loads Kiwi strictly from `settings_cli.json`/the bundled `.deb` install
+/// (`resolved`, see `CliConfig::resolve_paths`) - never from
 /// `KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR` (unlike `knowdesk-cli`'s
-/// `load_kiwi`). Silent (no notice printed) when morphological analysis is simply
-/// off or unconfigured, since that's this tool's default, expected state - only an
-/// actual load failure while it's configured on is worth a warning. Spawns Kiwi
-/// onto the dedicated actor thread it lives on for the rest of the run
+/// `load_kiwi`). `enable_morphological_analysis` is checked here on the raw
+/// `config`, not `resolved` - Kiwi's memory cost means it must stay an
+/// explicit opt-in, never turned on just because bundled files happen to be
+/// present. Silent (no notice printed) when morphological analysis is simply
+/// off, since that's this tool's default, expected state - only an actual
+/// load failure while it's configured on is worth a warning. Spawns Kiwi onto
+/// the dedicated actor thread it lives on for the rest of the run
 /// (`KiwiHandle::spawn` - `kiwi_rs::Kiwi` isn't `Send`, so it has to be built
 /// on that thread directly rather than constructed here and moved over).
-fn load_kiwi(config: &CliConfig) -> Option<KiwiHandle> {
+fn load_kiwi(config: &CliConfig, resolved: &ResolvedPaths) -> Option<KiwiHandle> {
     if !config.enable_morphological_analysis {
         return None;
     }
-    let (Some(lib_path), Some(model_dir)) =
-        (config.kiwi_lib_path.clone(), config.kiwi_model_dir.clone())
-    else {
+    let (Some(lib_path), Some(model_dir)) = (
+        resolved.kiwi_lib_path.clone(),
+        resolved.kiwi_model_dir.clone(),
+    ) else {
         eprintln!(
             "Warning: enable_morphological_analysis is on but kiwi_lib_path/kiwi_model_dir \
-             are missing in settings_cli.json — using bigram only."
+             couldn't be resolved (checked settings_cli.json and the bundled install path) \
+             — using bigram only."
         );
         return None;
     };

@@ -2,6 +2,8 @@
 name = "knowdesk-cli"
 version.workspace = true
 edition.workspace = true
+description = "kdfind - a search tool that scans a folder in-memory and searches it in the same run, no pre-built index needed"
+readme = "README.md"
 
 [lib]
 name = "knowdesk_cli"
@@ -35,3 +37,35 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = "3"
+
+# `.deb` package for `kdfind` only (not the headless `cli` binary) - Ubuntu 24.04
+# (docs/13_CLI_Tool.md). Bundles the exact Kiwi/PDFium builds already vendored
+# under the repo root's `.kiwi/`/`.pdfium/` (same ones used for local dev, per
+# `env`/`DEVELOPMENT.md`) at a fixed install layout
+# (`/usr/bin/kdfind` + `/usr/lib/kdfind/{pdfium,kiwi}`) that
+# `CliConfig::resolve_paths` auto-detects at runtime — no `settings_cli.json`
+# editing needed out of the box. Build with `cargo deb -p knowdesk-cli`.
+[package.metadata.deb]
+name = "kdfind"
+maintainer = "Yonghee Yu <yonghee.yu@miraeasset.com>"
+copyright = "2026, Yonghee Yu <yonghee.yu@miraeasset.com> - internal use only, not for redistribution"
+section = "utils"
+priority = "optional"
+depends = "$auto"
+extended-description = """\
+Scans a folder into an in-memory index and searches it in the same run, then \
+discards everything - no pre-built index database needed. Ships with Kiwi \
+(Korean morphological analysis) and PDFium (PDF text extraction) bundled, \
+auto-detected at /usr/lib/kdfind - enable Kiwi by setting \
+enable_morphological_analysis to true in \
+~/.local/share/KnowDesk/settings_cli.json (off by default; several hundred MB \
+of extra memory once loaded). See /usr/share/doc/kdfind/README.md."""
+assets = [
+    ["target/release/kdfind", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/kdfind/README.md", "644"],
+    ["../.pdfium/lib/libpdfium.so", "usr/lib/kdfind/pdfium/libpdfium.so", "644"],
+    ["../.kiwi/lib/libkiwi.so.0.22.2", "usr/lib/kdfind/kiwi/libkiwi.so.0.22.2", "644"],
+    { dest = "usr/lib/kdfind/kiwi/libkiwi.so.0", link_name = "libkiwi.so.0.22.2" },
+    { dest = "usr/lib/kdfind/kiwi/libkiwi.so", link_name = "libkiwi.so.0" },
+    ["../.kiwi/models/cong/base/*", "usr/lib/kdfind/kiwi/models/cong/base/", "644"],
+]

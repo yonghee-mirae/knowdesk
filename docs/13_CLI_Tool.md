@@ -81,7 +81,7 @@
 
 - `core`가 이미 `pub`으로 노출한 조각들(`ContentExtractor`, `Tokenizer`, `scan::hash`, `scan::filter`, `DocumentRepository`/`SearchRepository`/`SqliteDocumentStore`)을 그대로 재사용 — `IndexPipeline` 자체는 `&Connection`(`Sync`가 아님)을 들고 있어서 여러 스레드에서 그 메서드를 직접 호출하는 것 자체가 안 됨.
 - SQLite 쓰기는 `Mutex<Connection>`으로 감싸 짧게만 잠그고, 해싱·추출·bigram 토크나이즈는 락 없이 병렬로 수행.
-- PDF 추출은 `pdfium-render`가 내부적으로 모든 Pdfium 호출을 자체 뮤텍스로 직렬화하므로(공식 README "Multi-threading" 절 — Pdfium 자체가 스레드 세이프하지 않음) 병렬화 이득이 없지만 안전은 그대로 보장됨.
+- PDF 추출은 `parallel_index.rs`의 `PDF_LOCK`(`Mutex<()>`)으로 직접 직렬화한다. ⚠️ **정정 (2026-08-25):** 원래는 "`pdfium-render`가 내부적으로 뮤텍스로 직렬화해준다"(크레이트 README의 주장)고 보고 우리 쪽 락을 생략했었는데, 실사용 중 `kdfind ~/ 채권`이 홈 디렉터리를 스캔하다 libpdfium.so 내부(`CPDF_ColorSpace::CreateBufAndSetDefaultColor`)에서 SIGSEGV로 죽는 걸 실제로 겪었다. 코어덤프를 열어보니 두 스레드가 동시에 libpdfium.so 내부를 실행 중이었고, 크레이트 소스를 직접 확인해보니 `thread_safe` 피처(기본 켜짐)는 `unsafe impl Send + Sync for Pdfium`만 붙일 뿐 실제 락은 FFI 호출 경로 어디에도 없었다 — README 설명이 실제 코드와 다름. 설계 검토 단계에서 서드파티 문서만 믿고 소스로 검증하지 않은 게 원인. PDF 파일 처리(`extension == "pdf"`)에서만 `PDF_LOCK`을 잡도록 고쳐 재현 테스트(동일 PDF 40개, 16스레드)로 확인 — 락 없이는 5/5 크래시(double free 등 메모리 손상), 락을 넣으니 반복 실행에도 안정적.
 - Kiwi는 `kiwi_rs::Kiwi`가 `Send`가 아니라서(원시 포인터 보유) 전용 액터 스레드 하나가 소유하고, 나머지 스레드는 채널로 `tokenize`/`locate` 요청만 보낸다 — `src-tauri`의 `KiwiActor`/`KiwiHandle`과 동일한 패턴을 `cli` 안에 독립적으로 재구현(두 크레이트가 서로 의존하지 않게).
 - 동일 내용(SHA256) 파일 여러 개가 동시에 처리될 때 중복 추출이 일어날 수 있지만(비효율일 뿐 오류 아님), 최종 쓰기(`upsert_document`/`index_content`)는 멱등적 UPSERT라 DB 상태는 항상 올바르게 수렴함.
 

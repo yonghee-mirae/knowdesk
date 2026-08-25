@@ -36,6 +36,27 @@ pub struct IndexOutcome {
     pub skip: u64,
 }
 
+/// Serializes every call into `PdfExtractor` (native `libpdfium.so`) across all
+/// worker threads.
+///
+/// `pdfium-render`'s `thread_safe` feature (on by default, confirmed via
+/// `cargo tree`) only adds `unsafe impl Send + Sync for Pdfium` - a bare
+/// assertion with no actual locking anywhere in its FFI call path (checked
+/// its source directly: no `Mutex` guards any bindings call). Its own README
+/// claims Pdfium calls are serialized behind an internal mutex, but that
+/// isn't true of this crate version in practice - confirmed by a real crash:
+/// `kdfind ~/ 채권` over a home directory SIGSEGV'd inside
+/// `CPDF_ColorSpace::CreateBufAndSetDefaultColor`, with a second thread
+/// simultaneously deep inside `FPDF_LoadPage`/`CPDF_Page` construction in the
+/// same core dump - i.e. two threads genuinely executing inside
+/// libpdfium.so's C++ internals at once. Upstream Pdfium itself documents
+/// that it is not thread-safe, so concurrent calls corrupt its internal
+/// state. Since `core`'s `PdfExtractor` has no lock of its own (it's fine as
+/// a single-threaded call from `IndexPipeline`/the GUI), this has to be
+/// enforced here instead: only one worker thread may be inside `extract()`
+/// for a PDF at a time, everything else still runs fully in parallel.
+static PDF_LOCK: Mutex<()> = Mutex::new(());
+
 /// Confines a `KiwiTokenizer` to one dedicated thread and lets any number of
 /// worker threads request `tokenize`/`locate` calls through a channel instead
 /// — `kiwi_rs::Kiwi` contains raw pointers and is not `Send`, so a value can
@@ -137,11 +158,9 @@ impl Tokenizer for KiwiHandle {
 /// hashing, and bigram tokenization run fully in parallel across threads; two
 /// things don't scale with thread count regardless, but stay correct:
 ///
-/// - PDF extraction serializes internally no matter how many threads call it —
-///   `pdfium-render` wraps every actual Pdfium call in its own mutex (its
-///   README's "Multi-threading" section: Pdfium itself isn't thread-safe, so
-///   the crate sequences all calls to avoid crashes, "no performance benefit"
-///   by its own description).
+/// - PDF extraction is serialized by us via `PDF_LOCK` (see its doc comment) -
+///   `pdfium-render` does *not* actually do this itself despite what its
+///   README claims, and calling it concurrently crashes the process.
 /// - Kiwi tokenization (`kiwi`, if set) is funneled through its one dedicated
 ///   actor thread via `KiwiHandle`, same as `src-tauri`'s `KiwiActor`.
 ///
@@ -315,7 +334,17 @@ fn extract_and_index(
         extension: extension.to_string(),
     };
 
-    match extractor.extract(&document_info) {
+    // See `PDF_LOCK`'s doc comment - libpdfium.so is not safe to call from
+    // more than one thread at a time, no matter how many worker threads this
+    // process has for everything else.
+    let extraction_result = if extension.eq_ignore_ascii_case("pdf") {
+        let _guard = PDF_LOCK.lock().unwrap();
+        extractor.extract(&document_info)
+    } else {
+        extractor.extract(&document_info)
+    };
+
+    match extraction_result {
         Ok(result) => {
             let morph = join_tokens(&BigramTokenizer.tokenize(&result.body));
             let morph_kiwi = kiwi
@@ -476,5 +505,38 @@ mod tests {
             index_directory_parallel(dir.path(), &config, &extractors(), None, db.conn, 1);
 
         assert_eq!(outcome.full, 1);
+    }
+
+    /// Regression for a real crash: `kdfind ~/ 채권` over a home directory
+    /// SIGSEGV'd inside libpdfium.so (`PDF_LOCK`'s doc comment has the full
+    /// backtrace/root cause). Many identical-content PDF copies means many
+    /// worker threads all miss the `get_tier` dedup check at once (none has
+    /// written to the DB yet) and call `PdfExtractor::extract` concurrently -
+    /// exactly the condition that crashed before `PDF_LOCK` existed. Skipped
+    /// when no PDFium build is available (matches `core::extract::pdf`'s own
+    /// tests' convention).
+    #[test]
+    fn concurrent_pdf_extraction_does_not_crash() {
+        use knowdesk_core::extract::pdf::PdfExtractor;
+
+        if !PdfExtractor::is_available() {
+            eprintln!("Skipping: libpdfium not found (KNOWDESK_PDFIUM_LIB_DIR not set)");
+            return;
+        }
+
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/korean.pdf");
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..40 {
+            std::fs::copy(&fixture, dir.path().join(format!("문서{i}.pdf"))).unwrap();
+        }
+
+        let extractors: Vec<Box<dyn ContentExtractor + Send + Sync>> = vec![Box::new(PdfExtractor)];
+        let db = Db::open_in_memory().unwrap();
+        let config = Config::default();
+        let (_conn, outcome) =
+            index_directory_parallel(dir.path(), &config, &extractors, None, db.conn, 16);
+
+        assert_eq!(outcome.full, 40);
     }
 }

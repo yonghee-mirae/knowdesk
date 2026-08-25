@@ -75,6 +75,18 @@
 - `cli/src/lib.rs` — `support`(두 바이너리가 공유하는 `default_extractors()`)와 `cli_config`(`CliConfig`, `settings_cli.json` 로드/저장)를 담은 라이브러리 타깃. `src/bin/` 아래 바이너리는 `src/` 아래 파일을 직접 `mod`할 수 없어서 필요.
 - `cli/src/bin/find.rs` — `kdfind` 본체.
 
+### 병렬 색인 (2026-08-25 추가)
+
+`kdfind`는 유휴 CPU를 지켜야 하는 GUI와 달리 한 번 실행하고 끝나는 도구라 코어를 전부 써서 더 빨리 끝내는 게 이득이다. `cli/src/parallel_index.rs`(kdfind 전용, `core`/`src-tauri`는 한 줄도 안 건드림)가 `core::index::pipeline::IndexPipeline::index_file`과 같은 역할을 워커 스레드 여러 개로 나눠 수행한다:
+
+- `core`가 이미 `pub`으로 노출한 조각들(`ContentExtractor`, `Tokenizer`, `scan::hash`, `scan::filter`, `DocumentRepository`/`SearchRepository`/`SqliteDocumentStore`)을 그대로 재사용 — `IndexPipeline` 자체는 `&Connection`(`Sync`가 아님)을 들고 있어서 여러 스레드에서 그 메서드를 직접 호출하는 것 자체가 안 됨.
+- SQLite 쓰기는 `Mutex<Connection>`으로 감싸 짧게만 잠그고, 해싱·추출·bigram 토크나이즈는 락 없이 병렬로 수행.
+- PDF 추출은 `pdfium-render`가 내부적으로 모든 Pdfium 호출을 자체 뮤텍스로 직렬화하므로(공식 README "Multi-threading" 절 — Pdfium 자체가 스레드 세이프하지 않음) 병렬화 이득이 없지만 안전은 그대로 보장됨.
+- Kiwi는 `kiwi_rs::Kiwi`가 `Send`가 아니라서(원시 포인터 보유) 전용 액터 스레드 하나가 소유하고, 나머지 스레드는 채널로 `tokenize`/`locate` 요청만 보낸다 — `src-tauri`의 `KiwiActor`/`KiwiHandle`과 동일한 패턴을 `cli` 안에 독립적으로 재구현(두 크레이트가 서로 의존하지 않게).
+- 동일 내용(SHA256) 파일 여러 개가 동시에 처리될 때 중복 추출이 일어날 수 있지만(비효율일 뿐 오류 아님), 최종 쓰기(`upsert_document`/`index_content`)는 멱등적 UPSERT라 DB 상태는 항상 올바르게 수렴함.
+
+3000개 텍스트 파일 코퍼스(`core/examples/gen_bench_corpus.rs`)로 실측: 기존 `knowdesk-cli index`(단일 스레드, 파일 DB) 1분 31초 → `kdfind`(16코어, 인메모리 DB) 27초.
+
 ---
 
 ## 검증
@@ -82,6 +94,7 @@
 1. `cargo build -p knowdesk-cli` — `cli`/`kdfind` 두 바이너리 모두 빌드
 2. `cargo test -p knowdesk-core -p knowdesk-cli` — 기존 테스트 전부 통과, `cli_config` 단위 테스트(파일 없을 때 기본값 / 라운드트립 / 일부 필드만 있는 JSON), `cli/tests/find.rs` 통합 테스트(키워드 검색·확장자 필터·파일명 모드·limit·최초 실행 시 설정 파일 자동 생성)
 3. 수동 확인 — `KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`/`KNOWDESK_PDFIUM_LIB_DIR`를 일부러 존재하지 않는 값으로 설정해두고, `settings_cli.json`에 실제 경로를 채운 뒤 `kdfind`가 그 설정 파일만으로 Kiwi/PDF를 정상 동작시키는지 확인 — 환경변수는 완전히 무시됨을 재확인.
+4. `cli/src/parallel_index.rs`의 단위 테스트 4개(여러 스레드로 전체 색인/동일 내용 문서 중복 제거/미지원·임시파일 skip/스레드 1개로도 동작) 통과 확인. 대규모 코퍼스(`gen_bench_corpus`)로 실제 속도 개선 실측(위 "구현 요약" 참조).
 
 ---
 

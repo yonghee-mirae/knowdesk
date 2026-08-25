@@ -9,13 +9,11 @@
 
 use clap::Parser;
 use knowdesk_cli::cli_config::{cli_settings_path, CliConfig};
-use knowdesk_cli::support::default_extractors;
+use knowdesk_cli::parallel_index::{index_directory_parallel, KiwiHandle};
+use knowdesk_cli::support::default_extractors_sync;
 use knowdesk_core::config::Config;
 use knowdesk_core::db::Db;
 use knowdesk_core::extract::pdf::PdfExtractor;
-use knowdesk_core::index::pipeline::IndexPipeline;
-use knowdesk_core::nlp::bigram::BigramTokenizer;
-use knowdesk_core::nlp::kiwi::KiwiTokenizer;
 use knowdesk_core::nlp::Tokenizer;
 use knowdesk_core::search::service::SqliteSearchService;
 use knowdesk_core::search::{
@@ -93,25 +91,32 @@ fn main() -> anyhow::Result<()> {
     // tool deliberately never reads.
     PdfExtractor::set_lib_dir(config.pdfium_lib_dir.clone());
 
+    // A one-shot tool with no idle-CPU budget to protect (unlike the GUI,
+    // `docs/06_Development_Roadmap.md` B4) - spend every core to finish
+    // faster. `knowdesk_cli::parallel_index` is kdfind-only; `knowdesk-cli`
+    // and the GUI keep using `core::index::pipeline::IndexPipeline`'s
+    // single-threaded path unchanged (`docs/13_CLI_Tool.md`).
     let kiwi = load_kiwi(&config);
 
     let db = Db::open_in_memory()?;
-    let extractors = default_extractors();
-    let bigram = BigramTokenizer;
+    let extractors = default_extractors_sync();
     let index_config = Config::default();
-    let pipeline = IndexPipeline {
-        conn: &db.conn,
-        config: &index_config,
-        extractors: &extractors,
-        bigram: &bigram,
-        kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
-    };
-    pipeline.index_directory(&cli.path)?;
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let (conn, _outcome) = index_directory_parallel(
+        &cli.path,
+        &index_config,
+        &extractors,
+        kiwi.clone(),
+        db.conn,
+        threads,
+    );
 
     warn_if_query_contains_flag_like_tokens(&cli.query);
 
     let service = SqliteSearchService {
-        conn: &db.conn,
+        conn: &conn,
         kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
     };
     let request = SearchRequest {
@@ -268,8 +273,11 @@ impl Colors {
 /// `KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR` (unlike `knowdesk-cli`'s
 /// `load_kiwi`). Silent (no notice printed) when morphological analysis is simply
 /// off or unconfigured, since that's this tool's default, expected state - only an
-/// actual load failure while it's configured on is worth a warning.
-fn load_kiwi(config: &CliConfig) -> Option<KiwiTokenizer> {
+/// actual load failure while it's configured on is worth a warning. Spawns Kiwi
+/// onto the dedicated actor thread it lives on for the rest of the run
+/// (`KiwiHandle::spawn` - `kiwi_rs::Kiwi` isn't `Send`, so it has to be built
+/// on that thread directly rather than constructed here and moved over).
+fn load_kiwi(config: &CliConfig) -> Option<KiwiHandle> {
     if !config.enable_morphological_analysis {
         return None;
     }
@@ -283,10 +291,10 @@ fn load_kiwi(config: &CliConfig) -> Option<KiwiTokenizer> {
         return None;
     };
 
-    match KiwiTokenizer::new(lib_path, model_dir) {
-        Ok(kiwi) => {
+    match KiwiHandle::spawn(lib_path, model_dir) {
+        Ok(handle) => {
             tracing::info!("Using Kiwi morphological analyzer");
-            Some(kiwi)
+            Some(handle)
         }
         Err(e) => {
             eprintln!("Warning: Kiwi initialization failed ({e}) — using bigram only.");

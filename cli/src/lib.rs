@@ -3,4 +3,5 @@
 //! under `src/` directly, so the shared pieces live here instead.
 
 pub mod cli_config;
+pub mod parallel_index;
 pub mod support;

@@ -2526,9 +2526,11 @@ dependencies = [
  "anyhow",
  "clap",
  "knowdesk-core",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
+ "time",
  "tracing",
  "tracing-subscriber",
 ]

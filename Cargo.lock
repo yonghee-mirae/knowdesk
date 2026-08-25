@@ -2521,7 +2521,7 @@ dependencies = [
 
 [[package]]
 name = "knowdesk-cli"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -2535,7 +2535,7 @@ dependencies = [
 
 [[package]]
 name = "knowdesk-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "calamine",
@@ -2561,7 +2561,7 @@ dependencies = [
 
 [[package]]
 name = "knowdesk-tauri"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "knowdesk-core",
  "objc2",

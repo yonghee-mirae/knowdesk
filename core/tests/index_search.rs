@@ -1037,6 +1037,61 @@ fn kiwi_query_expansion_still_finds_misanalyzed_compound_via_or_safety_net() {
 }
 
 #[test]
+fn kiwi_expanded_term_followed_by_a_plain_term_does_not_crash_fts5() {
+    // Regression: `expand_with_kiwi` wraps a term Kiwi analyzes differently in
+    // `(term OR morph_kiwi:(...))`. A two-word query like "이사회 채권" then
+    // joined those parts with a plain space (FTS5's usual implicit-AND
+    // convention for bare terms) — but FTS5 requires an *explicit* operator
+    // once one side is parenthesized; `t MATCH '(a OR b) c'` is a syntax
+    // error, confirmed directly against FTS5, while `(a OR b) AND c` is not.
+    // Before the fix, any multi-word query where a non-final word happened to
+    // be one Kiwi expands (like "이사회", per the misanalysis in the test
+    // above) crashed instead of searching - reported in practice via `kdfind
+    // ./docs 이사회 -f`, but this reproduces the same root cause without any
+    // CLI involved at all.
+    let Some(kiwi_result) = KiwiTokenizer::from_env() else {
+        eprintln!("KNOWDESK_KIWI_LIB_PATH/KNOWDESK_KIWI_MODEL_DIR not set, skipping");
+        return;
+    };
+    let kiwi = kiwi_result.expect("Kiwi initialization failed");
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("이사회결의.txt"),
+        "이사회 결의를 통해 채권 발행을 승인한다.",
+    )
+    .unwrap();
+
+    let db = Db::open_in_memory().unwrap();
+    let config = Config::default();
+    let bigram = BigramTokenizer;
+    let extractors: Vec<Box<dyn ContentExtractor>> = vec![Box::new(TxtExtractor)];
+    let pipeline = IndexPipeline {
+        conn: &db.conn,
+        config: &config,
+        extractors: &extractors,
+        bigram: &bigram,
+        kiwi: Some(&kiwi),
+    };
+    pipeline.index_directory(dir.path()).unwrap();
+
+    let search = SqliteSearchService {
+        conn: &db.conn,
+        kiwi: Some(&kiwi),
+    };
+    let result = search
+        .search(&SearchRequest {
+            query: "이사회 채권".to_string(),
+            mode: SearchMode::Content,
+            limit: 10,
+        })
+        .unwrap(); // must not error out with an FTS5 syntax error
+
+    assert_eq!(result.hits.len(), 1, "hits: {:?}", result.hits);
+    assert_eq!(result.hits[0].filename, "이사회결의.txt");
+}
+
+#[test]
 fn highlights_literal_match_in_original_text_when_body_column_has_none() {
     // When a particle is attached to a noun with no space, like "레이아웃과", the body column
     // doesn't contain that token (FTS5's default tokenizer treats "레이아웃과" as one opaque

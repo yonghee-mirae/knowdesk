@@ -21,6 +21,7 @@ use knowdesk_core::search::service::SqliteSearchService;
 use knowdesk_core::search::{
     MatchKind, SearchMode as CoreSearchMode, SearchRequest, SearchService,
 };
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -35,8 +36,10 @@ use std::path::PathBuf;
                   thing in single quotes so the shell\n                                       \
                   passes the literal double quotes through\n  \
                   kdfind ./docs -f -l 5 보고서          # filename mode, top 5 results\n\n\
-                  Put -f/-l before the query text - once the query starts, every \
-                  remaining argument (including a later -f/-l) becomes part of it.\n\n\
+                  Put -f/-l before the query text. Once the query starts, everything \
+                  after it — including anything that looks like -f/-l — is part of the \
+                  query itself, so a document containing the word \"-l\" is still \
+                  findable.\n\n\
                   Filters (x:/p:/m>/m</m=) work the same as the GUI search box - just \
                   type them as part of the query, e.g. `채권 x:pdf p:리서치`."
 )]
@@ -47,6 +50,12 @@ struct Cli {
     /// Search query — same syntax as the GUI search box (keywords, "phrase",
     /// AND/OR/NOT, prefix*, grouping, and x:/p:/m> filters). Given as separate
     /// words, they're rejoined with spaces, so `AND`/`OR`/`NOT` need no quoting.
+    /// Must come after `-f`/`-l` - once it starts, everything remaining
+    /// (including a token that looks like `-f`/`-l`) is part of the query
+    /// itself, not a flag. This is deliberate: a query genuinely containing a
+    /// dash-led word (e.g. searching for the literal text "-l") must still be
+    /// possible, and that's only unambiguous if flags are required to come
+    /// first.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     query: Vec<String>,
 
@@ -99,6 +108,8 @@ fn main() -> anyhow::Result<()> {
     };
     pipeline.index_directory(&cli.path)?;
 
+    warn_if_query_contains_flag_like_tokens(&cli.query);
+
     let service = SqliteSearchService {
         conn: &db.conn,
         kiwi: kiwi.as_ref().map(|k| k as &dyn Tokenizer),
@@ -119,17 +130,138 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    for hit in result.hits {
-        let tag = match hit.match_kind {
-            MatchKind::Exact => "exact match",
-            MatchKind::Morphological => "morphological match",
+    let colors = Colors::detect();
+    let count = result.hits.len();
+    println!(
+        "{b}{count} result{s}{r}",
+        b = colors.bold,
+        s = if count == 1 { "" } else { "s" },
+        r = colors.reset,
+    );
+
+    for (i, hit) in result.hits.into_iter().enumerate() {
+        let (tag, tag_color) = match hit.match_kind {
+            MatchKind::Exact => ("exact match", colors.green),
+            MatchKind::Morphological => ("morphological match", colors.yellow),
         };
-        println!("{} [{tag}]", hit.path);
+        println!(
+            "\n{dim}{n}.{r} {path_c}{path}{r} {tag_c}[{tag}]{r}",
+            dim = colors.dim,
+            n = i + 1,
+            r = colors.reset,
+            path_c = colors.path,
+            path = hit.path,
+            tag_c = tag_color,
+        );
         if let Some(snippet) = hit.snippet {
-            println!("  {snippet}");
+            println!("   {}", colors.highlight(&flatten_snippet(&snippet)));
         }
     }
     Ok(())
+}
+
+/// Since flags must precede the query (see `Cli::query`'s doc comment), a
+/// flag-looking word placed after the query silently becomes part of the
+/// search text instead of being recognized as a flag - e.g. `kdfind ./docs
+/// 채권 -l 3` searches for the literal words "채권 -l 3" and (almost always)
+/// finds nothing, with no error to explain why. Warn when that's plausibly
+/// what happened, without changing behavior - the query is still searched for
+/// literally either way, so a document that genuinely contains "-l" as text
+/// is still findable, just with this notice alongside it.
+fn warn_if_query_contains_flag_like_tokens(query: &[String]) {
+    const FLAG_LIKE: &[&str] = &["-f", "--filename", "-l", "--limit"];
+    let found: Vec<&str> = query
+        .iter()
+        .map(String::as_str)
+        .filter(|t| FLAG_LIKE.contains(t))
+        .collect();
+    if !found.is_empty() {
+        eprintln!(
+            "Notice: \"{}\" in the query looks like a flag, but flags only work before \
+             the query text — treating it as a literal search word instead. Move it \
+             earlier if you meant the flag, e.g. `kdfind <path> -l 3 <query>`.",
+            found.join("\", \"")
+        );
+    }
+}
+
+/// Collapses a possibly multi-line snippet (e.g. an XLSX where cell text is
+/// joined with newlines, or a PDF page break falling inside the context
+/// window) into a single line, trimming each original line's surrounding
+/// whitespace. Otherwise a line break partway through loses this line's
+/// indentation on the next print, and the snippet looks pasted in raw rather
+/// than formatted.
+fn flatten_snippet(snippet: &str) -> String {
+    snippet
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Terminal styling for search results - real ANSI highlighting when stdout is
+/// an interactive terminal, and a no-op (every field empty) otherwise, so
+/// piping to a file or another program still gets plain text. Also off when
+/// `NO_COLOR` is set (https://no-color.org).
+struct Colors {
+    bold: &'static str,
+    dim: &'static str,
+    path: &'static str,
+    green: &'static str,
+    yellow: &'static str,
+    match_hl: &'static str,
+    reset: &'static str,
+}
+
+impl Colors {
+    fn detect() -> Self {
+        let enabled = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+        if enabled {
+            Self {
+                bold: "\x1b[1m",
+                dim: "\x1b[2m",
+                path: "\x1b[1;36m",
+                green: "\x1b[2;32m",
+                yellow: "\x1b[2;33m",
+                match_hl: "\x1b[1;31m",
+                reset: "\x1b[0m",
+            }
+        } else {
+            Self {
+                bold: "",
+                dim: "",
+                path: "",
+                green: "",
+                yellow: "",
+                match_hl: "",
+                reset: "",
+            }
+        }
+    }
+
+    /// Replaces `search::service`'s `>>`/`<<` highlight markers with real ANSI
+    /// highlighting. Left untouched (literal arrows, as before) when colors are
+    /// disabled, so scripts parsing the old plain-text markers keep working.
+    fn highlight(&self, snippet: &str) -> String {
+        if self.reset.is_empty() {
+            return snippet.to_string();
+        }
+        let mut out = String::with_capacity(snippet.len());
+        let mut chars = snippet.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '>' && chars.peek() == Some(&'>') {
+                chars.next();
+                out.push_str(self.match_hl);
+            } else if c == '<' && chars.peek() == Some(&'<') {
+                chars.next();
+                out.push_str(self.reset);
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
 }
 
 /// Loads Kiwi strictly from `settings_cli.json` - never from

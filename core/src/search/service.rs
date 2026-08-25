@@ -166,7 +166,7 @@ fn to_hit(row: SearchRow, match_kind: MatchKind) -> SearchHit {
 /// `highlight_literal_match`).
 fn expand_with_kiwi(parsed: &ParsedQuery, kiwi: &dyn Tokenizer) -> (String, Vec<String>) {
     let mut analyzed_forms = Vec::new();
-    let query_expr = parsed
+    let mapped: Vec<String> = parsed
         .terms
         .iter()
         .map(|term| {
@@ -189,9 +189,40 @@ fn expand_with_kiwi(parsed: &ParsedQuery, kiwi: &dyn Tokenizer) -> (String, Vec<
                 expr
             }
         })
-        .collect::<Vec<_>>()
-        .join(" ");
-    (query_expr, analyzed_forms)
+        .collect();
+    (join_as_fts5_expression(&mapped), analyzed_forms)
+}
+
+/// Joins expanded query parts the way `parsed.match_expr` (plain
+/// `terms.join(" ")`) would, but with explicit `AND` between any two adjacent
+/// operands instead of relying on FTS5's implicit whitespace-AND. Necessary
+/// because `expand_with_kiwi` can wrap a plain term in `(term OR
+/// morph_kiwi:(...))`, and FTS5 rejects a parenthesized group placed next to
+/// another term/phrase with nothing but whitespace between them — confirmed
+/// directly against FTS5: `t MATCH '(a OR b) c'` raises `fts5: syntax error
+/// near "c"`, while `t MATCH '(a OR b) AND c'` is valid. This surfaced as a
+/// real bug: a query like `이사회 -f` (the second word not itself meaningful,
+/// just plain text) crashed instead of returning results, whenever "이사회"
+/// happened to be one of the words Kiwi expands. Inserting `AND` between two
+/// terms that aren't already joined by an explicit operator doesn't change
+/// what the query means — a bareword immediately followed by another bareword
+/// already means AND to FTS5 (`docs/05_Search_Language_v1.md`) — it just makes
+/// that explicit everywhere so parenthesized terms are never the exception.
+fn join_as_fts5_expression(parts: &[String]) -> String {
+    let mut out = String::new();
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            let prev_is_operator = matches!(parts[i - 1].as_str(), "AND" | "OR" | "NOT");
+            let this_is_operator = matches!(part.as_str(), "AND" | "OR" | "NOT");
+            out.push_str(if prev_is_operator || this_is_operator {
+                " "
+            } else {
+                " AND "
+            });
+        }
+        out.push_str(part);
+    }
+    out
 }
 
 /// Builds the list of search terms to look up literally in the source text.
@@ -328,7 +359,8 @@ fn highlight_missing_needles(snippet: &str, needles: &[String]) -> String {
         while let Some(offset) = find_ignore_ascii_case(&plain[search_from..], &needle_chars) {
             let start = search_from + offset;
             let end = start + needle_chars.len();
-            let at_boundary = !require_boundary || is_at_word_boundary(&plain, start, needle_chars.len());
+            let at_boundary =
+                !require_boundary || is_at_word_boundary(&plain, start, needle_chars.len());
             if at_boundary && !highlighted[start..end].iter().any(|&h| h) {
                 highlighted[start..end].iter_mut().for_each(|h| *h = true);
             }

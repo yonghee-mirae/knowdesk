@@ -10,7 +10,7 @@
 use std::path::Path;
 use std::process::Command;
 
-fn run(sample_dir: &Path, data_home: &Path, args: &[&str]) -> String {
+fn run_raw(sample_dir: &Path, data_home: &Path, args: &[&str]) -> std::process::Output {
     let output = Command::new(env!("CARGO_BIN_EXE_kdfind"))
         .arg(sample_dir)
         .args(args)
@@ -30,7 +30,21 @@ fn run(sample_dir: &Path, data_home: &Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
-    String::from_utf8(output.stdout).unwrap()
+    output
+}
+
+fn run(sample_dir: &Path, data_home: &Path, args: &[&str]) -> String {
+    String::from_utf8(run_raw(sample_dir, data_home, args).stdout).unwrap()
+}
+
+/// Same as `run`, but also returns stderr - for tests asserting on a warning
+/// notice rather than (or in addition to) the search results themselves.
+fn run_with_stderr(sample_dir: &Path, data_home: &Path, args: &[&str]) -> (String, String) {
+    let output = run_raw(sample_dir, data_home, args);
+    (
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
 }
 
 #[test]
@@ -116,6 +130,76 @@ fn limit_caps_the_number_of_results() {
 
     let hit_count = stdout.matches("[exact match]").count();
     assert_eq!(hit_count, 2, "stdout: {stdout}");
+}
+
+/// Flags must precede the query - once the query starts, a flag-looking word
+/// (like `-l`) is deliberately treated as literal query text instead (so a
+/// document genuinely containing "-l" is still findable), and `kdfind` warns
+/// on stderr that this is what happened rather than failing silently.
+#[test]
+fn limit_flag_after_the_query_is_treated_as_literal_text_with_a_warning() {
+    let sample_dir = tempfile::tempdir().unwrap();
+    let data_home = tempfile::tempdir().unwrap();
+    for i in 0..5 {
+        std::fs::write(
+            sample_dir.path().join(format!("문서{i}.txt")),
+            format!("채권 발행 {i}"),
+        )
+        .unwrap();
+    }
+
+    // "-l" became part of the query text, so it's no longer just "채권" (which
+    // would match all 5 files) - none of them contain the literal word "-l".
+    let (stdout, stderr) =
+        run_with_stderr(sample_dir.path(), data_home.path(), &["채권", "-l", "2"]);
+
+    assert!(stdout.contains("No results"), "stdout: {stdout}");
+    assert!(
+        stderr.contains("-l") && stderr.contains("looks like a flag"),
+        "stderr: {stderr}"
+    );
+}
+
+/// Same as above, for `-f`.
+#[test]
+fn filename_flag_after_the_query_is_treated_as_literal_text_with_a_warning() {
+    let sample_dir = tempfile::tempdir().unwrap();
+    let data_home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        sample_dir.path().join("이사회결의.txt"),
+        "오늘 점심 메뉴는 김치찌개였다.",
+    )
+    .unwrap();
+
+    // Content mode (the "-f" never switched it to filename mode) and the
+    // filename word never appears in the body, so no hit either way.
+    let (stdout, stderr) =
+        run_with_stderr(sample_dir.path(), data_home.path(), &["이사회결의", "-f"]);
+
+    assert!(stdout.contains("No results"), "stdout: {stdout}");
+    assert!(
+        stderr.contains("-f") && stderr.contains("looks like a flag"),
+        "stderr: {stderr}"
+    );
+}
+
+/// Flags placed before the query keep working exactly as before - this is the
+/// supported, unambiguous order.
+#[test]
+fn flags_before_the_query_still_work_without_any_warning() {
+    let sample_dir = tempfile::tempdir().unwrap();
+    let data_home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        sample_dir.path().join("이사회결의.txt"),
+        "오늘 점심 메뉴는 김치찌개였다.",
+    )
+    .unwrap();
+
+    let (stdout, stderr) =
+        run_with_stderr(sample_dir.path(), data_home.path(), &["-f", "이사회결의"]);
+
+    assert!(stdout.contains("이사회결의.txt"), "stdout: {stdout}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 
 #[test]

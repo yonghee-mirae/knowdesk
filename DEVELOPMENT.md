@@ -123,7 +123,7 @@ cargo run -p knowdesk-cli --bin kdfind -- ./samples 채권 발행
 | macOS / Linux | bash/zsh | `source ./env` |
 | Windows | PowerShell | `. .\env.ps1` |
 
-Windows는 `env.ps1` 안에 남아 있는 두 가지 미확인 사항에 주의해야 한다: PDFium Windows 배포판의 실제 폴더명(`.pdfium\bin`으로 가정했으나 미검증 — macOS/Linux는 `lib/`로 확인됨), 그리고 Kiwi 설치 스크립트(`kiwi-rs`)가 만드는 `.kiwi\lib\kiwi.dll` 경로(mac/Linux의 `libkiwi.{so,dylib}`와 달리 `lib` 접두사가 없음). 압축을 풀거나 설치한 뒤 실제 경로가 스크립트의 가정과 맞는지 먼저 확인할 것.
+Windows에서 `env.ps1`이 가정하는 두 경로(PDFium `.pdfium\bin\pdfium.dll`, Kiwi `.kiwi\lib\kiwi.dll` — mac/Linux의 `libkiwi.{so,dylib}`와 달리 `lib` 접두사 없음)는 실기(2026-08-26)로 검증 완료됐다.
 
 이후 플랫폼과 무관하게 동일하게 실행한다:
 
@@ -153,5 +153,5 @@ KNOWDESK_DB_PATH="$(pwd)/samples.db" npm run tauri dev
 | 플랫폼 | 상태 | 방법 |
 |---|---|---|
 | macOS | 완료 (2026-08-23, `docs/06_Development_Roadmap.md` Phase D3) | `npm run tauri build` → `.app`/`.dmg` 생성. `src-tauri/tauri.macos.conf.json`(macOS 전용 오버라이드)의 `bundle.resources`가 PDFium/Kiwi 네이티브 라이브러리·모델을 `Contents/Resources/native/`에 자동 동봉하고, 실행 시 `set_bundled_native_lib_env_vars`(`src-tauri/src/lib.rs`, macOS 전용)가 그 경로로 `KNOWDESK_PDFIUM_LIB_DIR`/`KNOWDESK_KIWI_LIB_PATH`/`KNOWDESK_KIWI_MODEL_DIR`를 자동 설정한다. 코드사이닝은 아직 없음 — 로컬 배포 테스트용 ad-hoc 빌드다. |
-| Windows | 구현했으나 미검증 (2026-08-24, `docs/01_KnowDesk_PRD.md` 상 실제 타겟 플랫폼) | `tauri.windows.conf.json`(Windows 전용 오버라이드)에 `bundle.targets: ["msi", "nsis"]` + `bundle.resources`(`pdfium.dll`/`kiwi.dll`/Kiwi 모델) 추가, `src-tauri`에 Windows용 `set_bundled_native_lib_env_vars`도 추가(macOS와 동일한 패턴, 다만 Tauri의 Windows `resource_dir()` 규칙상 실행 파일과 같은 폴더가 리소스 위치라 상대경로 계산은 더 단순함). **이 환경에 Windows 머신이 없어 실제로 빌드·실행해보지 못했다** - `cargo build`/`clippy`가 이 Linux 머신에서 통과하는 것만 확인. 파일 경로는 `env.ps1`의 기존 가정을 그대로 따름(`pdfium.dll`은 `bin/` 아래 - 미확인, `kiwi.dll`은 `lib/` 아래 - 확인됨). 코드사이닝은 미착수. |
+| Windows | 환경 구성 검증 완료, 패키징 산출물 자체는 미검증 (2026-08-26, `docs/01_KnowDesk_PRD.md` 상 실제 타겟 플랫폼) | `tauri.windows.conf.json`(Windows 전용 오버라이드)에 `bundle.targets: ["msi", "nsis"]` + `bundle.resources`(`pdfium.dll`/`kiwi.dll`/Kiwi 모델) 추가, `src-tauri`에 Windows용 `set_bundled_native_lib_env_vars`도 추가(macOS와 동일한 패턴, 다만 Tauri의 Windows `resource_dir()` 규칙상 실행 파일과 같은 폴더가 리소스 위치라 상대경로 계산은 더 단순함). 실기(Rust MSVC 툴체인 + MSVC Build Tools)로 `cargo build --workspace`가 링크 단계까지 정상 통과하는 것, 그리고 `pdfium.dll`이 `bin/` 아래·`kiwi.dll`이 `lib/` 아래라는 `env.ps1`의 경로 가정이 실제 배포판 압축 결과와 일치하는 것까지 확인했다. `npm run tauri build`로 msi/nsis 산출물을 실제로 만들어보는 것과 코드사이닝은 아직 미착수. |
 | Linux | 계획 없음 (PRD 타겟 아님) | 헤드리스 코어(`cli`) 검증 + Phase C UI 개발까지만 대상이다. `tauri dev`는 Linux에서도 동작한다(`docs/06_Development_Roadmap.md` Phase C 참고). |

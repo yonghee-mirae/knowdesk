@@ -16,12 +16,11 @@
 
 $repoRoot = $PSScriptRoot
 
-# ⚠️ 확인 필요: pdfium-binaries Windows 배포판의 실제 내부 폴더명(bin/ vs lib/)을
-# 검증하지 못했다 (macOS/Linux 배포판은 lib/pdfium.{so,dylib} 확인됨 — 문서화 안 됨).
-# 압축을 풀어 pdfium.dll이 어느 폴더에 있는지 확인한 뒤 아래 경로를 맞게 고칠 것.
+# pdfium-binaries Windows 배포판(pdfium-win-x64.tgz)의 실제 내부 폴더명이
+# "bin/"임을 실기(2026-08-26)로 확인했다 — macOS/Linux 배포판(lib/)과 다르다.
 $env:KNOWDESK_PDFIUM_LIB_DIR = Join-Path $repoRoot ".pdfium\bin"
 
-# kiwi-rs 설치 스크립트(scripts/install_kiwi.ps1)가 실제로 "lib\kiwi.dll"에 두는
-# 것을 확인했다 — mac/Linux처럼 "lib" 접두사가 붙지 않는다.
+# kiwi_win_x64_v0.22.2.zip을 실기(2026-08-26)로 풀어 "lib\kiwi.dll"에 있음을
+# 확인했다 — mac/Linux처럼 "lib" 접두사가 붙지 않는다.
 $env:KNOWDESK_KIWI_LIB_PATH = Join-Path $repoRoot ".kiwi\lib\kiwi.dll"
 $env:KNOWDESK_KIWI_MODEL_DIR = Join-Path $repoRoot ".kiwi\models\cong\base"

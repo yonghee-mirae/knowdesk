@@ -345,13 +345,13 @@ fn set_bundled_native_lib_env_vars() {
 /// includes the resources in the executable folder") - the installer places
 /// `bundle.resources` right next to the installed `.exe`, no subfolder jump.
 ///
-/// ⚠️ **Unverified - no Windows machine available to test this.** Filenames/
-/// layout follow the same assumptions already documented in `env.ps1`:
-/// `pdfium.dll` under a `bin/` folder (pdfium-binaries' Windows release layout
-/// - unconfirmed, mac/Linux release layouts use `lib/` instead) and `kiwi.dll`
-/// directly under `lib/` (confirmed via `scripts/install_kiwi.ps1` per
-/// `env.ps1`, no `lib` prefix on the filename unlike `libkiwi.{so,dylib}`).
-/// Verify against a real packaged build before relying on this.
+/// Filenames/layout follow the same assumptions already documented in
+/// `env.ps1`: `pdfium.dll` under a `bin/` folder (mac/Linux release layouts
+/// use `lib/` instead) and `kiwi.dll` directly under `lib/` (no `lib` prefix
+/// on the filename unlike `libkiwi.{so,dylib}`). Confirmed on a real Windows
+/// machine (2026-08-26) by extracting `pdfium-win-x64.tgz` and
+/// `kiwi_win_x64_v0.22.2.zip` - both paths match. Still unverified: an actual
+/// packaged `.msi`/`.exe` build exercising this function end-to-end.
 ///
 /// Same graceful fallback as macOS: an already-set env var wins, and this is
 /// a no-op if the bundled files aren't there - e.g. `cargo run`/`tauri dev`,

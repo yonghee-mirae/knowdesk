@@ -36,7 +36,7 @@ export class KdSyntaxHelp extends HTMLElement {
         }
         .sh-group-label {
           padding: 14px 4px 6px;
-          font-size: 11px;
+          font-size: 12px;
           font-weight: 700;
           letter-spacing: 0.05em;
           text-transform: uppercase;

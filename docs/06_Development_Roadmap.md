@@ -151,7 +151,7 @@ DRM을 논외로 하면 최대 리스크는 PDF 한글 추출 품질이다. 본�
 
 ⚠️ **플랫폼별 설정 분리 + Windows 리소스 동봉 추가 (2026-08-24):** 공용 `tauri.conf.json`에 macOS `.dylib` 경로가 하드코딩돼 있던 걸 Tauri 2의 플랫폼별 설정 오버라이드(`tauri.<platform>.conf.json`, 해당 플랫폼 빌드에만 병합됨)로 분리 - `bundle.resources`/`bundle.targets`를 `tauri.macos.conf.json`으로 옮기고, 같은 패턴으로 `tauri.windows.conf.json`을 신설해 `pdfium.dll`/`kiwi.dll`/Kiwi 모델 동봉을 추가했다. `src-tauri`에도 Windows용 `set_bundled_native_lib_env_vars`를 macOS 버전과 나란히 추가 - Tauri 자체의 `resource_dir()` 규칙상 Windows는 macOS(`Contents/Resources`)·Linux(`/usr/lib/<name>`)와 달리 **실행 파일과 같은 폴더**가 리소스 위치라, 상대경로 계산이 그만큼 더 단순하다.
 
-✅ **경로 가정 실기 검증 완료 (2026-08-26):** `pdfium.dll`이 `bin/` 폴더 아래(pdfium-win-x64.tgz 압축 결과), `kiwi.dll`이 `lib/` 바로 아래(kiwi_win_x64_v0.22.2.zip 압축 결과, `libkiwi.{so,dylib}`와 달리 `lib` 접두사 없음)라는 `env.ps1`의 기존 가정을 실제 Windows 머신에서 압축을 풀어 확인했다 - 두 경로 모두 그대로 맞다. 다만 `npm run tauri build`로 실제 msi/nsis 산출물을 만들어보는 것은 아직 하지 않았다.
+✅ **경로 가정 실기 검증 완료 (2026-08-26):** `pdfium.dll`이 `bin/` 폴더 아래(pdfium-win-x64.tgz 압축 결과), `kiwi.dll`이 `lib/` 바로 아래(kiwi_win_x64_v0.22.2.zip 압축 결과, `libkiwi.{so,dylib}`와 달리 `lib` 접두사 없음)라는 `env.ps1`의 기존 가정을 실제 Windows 머신에서 압축을 풀어 확인했다 - 두 경로 모두 그대로 맞다. 다만 `npm run tauri build`로 실제 nsis 산출물을 만들어보는 것은 아직 하지 않았다.
 
 ## D2 Windows 경로 처리
 
@@ -167,6 +167,8 @@ DRM을 논외로 하면 최대 리스크는 PDF 한글 추출 품질이다. 본�
 ⚠️ **macOS 선행 구현 (2026-08-23):** `tauri.conf.json`의 `bundle.active`를 켜고 `targets: ["app", "dmg"]`(2026-08-24부터 `tauri.macos.conf.json`으로 이동, 위 D1 참조)로 `.app`+`.dmg`를 만든다(코드사이닝은 아직 없음 - 로컬 실행/배포 테스트용 ad-hoc 빌드).
 
 ⚠️ **Windows `bundle.targets` 추가 (2026-08-24):** `tauri.windows.conf.json`에 `targets: ["msi", "nsis"]` 추가 - Tauri 2가 지원하는 두 Windows 인스톨러 포맷 모두를 대상으로 한다. 실기(2026-08-26)에서 Rust MSVC 툴체인 + MSVC Build Tools + PDFium/Kiwi 리소스를 갖춘 뒤 `cargo build --workspace`가 링크 단계까지 정상 통과하는 것은 확인했다 - 다만 `npm run tauri build`로 msi/nsis 인스톨러 산출물 자체를 만들어보는 것과 코드사이닝은 여전히 미착수.
+
+✅ **`nsis`만 남김 (2026-08-26):** 배포 대상이 조직 내 소수라 IT 배포 도구(그룹 정책/SCCM) 연동이 필요 없고, 단일 `.exe`로 바로 전달·실행할 수 있는 NSIS 쪽이 더 간단하다고 판단해 `targets`를 `["nsis"]`로 좁혔다. MSI가 다시 필요해지면(사내 IT 배포 도구 연동 등) `targets`에 `"msi"`를 도로 추가하면 된다.
 
 ## D4 Performance
 

@@ -143,9 +143,27 @@ impl<'a> SqliteSearchService<'a> {
     }
 }
 
+/// Strips the `\\?\`/`\\?\UNC\` extended-length prefix Windows' `canonicalize()`
+/// adds to every path it returns (see `core::index::canonical_path`'s doc
+/// comment) - confirmed on real Windows hardware (2026-08-26) to leak all the
+/// way into the search preview pane as `\\?\C:\Users\...`, since `paths.path`
+/// stores the canonical form verbatim. Stripped only here, at the DB-to-UI
+/// boundary - every internal comparison (dedup, `prune_paths_outside_watched`,
+/// etc.) still runs against the untouched canonical value stored in the DB. A
+/// no-op on Linux/macOS, where `canonicalize()` never adds this prefix.
+fn display_path(path: String) -> String {
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        path
+    }
+}
+
 fn to_hit(row: SearchRow, match_kind: MatchKind) -> SearchHit {
     SearchHit {
-        path: row.path,
+        path: display_path(row.path),
         filename: row.filename,
         snippet: row.snippet,
         rank: row.rank,
@@ -467,4 +485,33 @@ fn find_ignore_ascii_case(haystack: &[char], needle: &[char]) -> Option<usize> {
             .zip(needle)
             .all(|(h, n)| h.eq_ignore_ascii_case(n))
     })
+}
+
+#[cfg(test)]
+mod display_path_tests {
+    use super::display_path;
+
+    #[test]
+    fn strips_windows_extended_length_prefix() {
+        assert_eq!(
+            display_path(r"\\?\C:\Users\15U50R\samples\문서.txt".to_string()),
+            r"C:\Users\15U50R\samples\문서.txt"
+        );
+    }
+
+    #[test]
+    fn strips_windows_extended_length_unc_prefix() {
+        assert_eq!(
+            display_path(r"\\?\UNC\server\share\문서.txt".to_string()),
+            r"\\server\share\문서.txt"
+        );
+    }
+
+    #[test]
+    fn leaves_ordinary_paths_unchanged() {
+        assert_eq!(
+            display_path("/home/user/samples/문서.txt".to_string()),
+            "/home/user/samples/문서.txt"
+        );
+    }
 }
